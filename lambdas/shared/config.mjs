@@ -19,6 +19,7 @@ export const TUNABLE_KEYS = [
   "alertMode",
   "feeBps",
   "slippageBps",
+  "timeoutTradingDays", // labeler: max trading days to hold before TIMEOUT
 ];
 
 let _doc;

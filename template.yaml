@@ -49,6 +49,11 @@ Parameters:
     Default: cron(30 22 ? * MON-FRI *)
     Description: UTC cron for the post-close daily scan.
 
+  LabelScheduleExpression:
+    Type: String
+    Default: cron(0 23 ? * MON-FRI *)
+    Description: UTC cron for the daily outcome-labeling pass (after the scan).
+
   # Deploy-time baseline for the scan schedule. Defaults OFF so deploys never
   # silently start the scanner before the pipeline is ready (no snapshots until
   # Phase 4, no alerts until Phase 6). Set to 'true' (or override at deploy) when
@@ -236,6 +241,48 @@ Resources:
             Schedule: !Ref ScanScheduleExpression
             Enabled: !If [ScheduleIsEnabled, true, false]
 
+  # ===========================================================================
+  # Labeler Lambda (Phase 5). Walks open signals forward, records real outcomes
+  # (first-touch, pessimistic fills, after costs). Reads gp-outcomes + gp-config,
+  # updates gp-outcomes. Tiingo only (no Finnhub). No alerts.
+  # ===========================================================================
+  LabelerFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: esm
+        Target: es2022
+        Sourcemap: false
+        EntryPoints:
+          - handler.mjs
+        External:
+          - '@aws-sdk/*'
+    Properties:
+      FunctionName: gp-labeler
+      CodeUri: lambdas/labeler/
+      Description: Daily outcome labeling — first-touch, pessimistic fills, after-cost P&L.
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource:
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${TiingoKeyPath}'
+        # Reads OPEN rows and writes labels back to gp-outcomes; config is read-only.
+        - DynamoDBCrudPolicy:
+            TableName: !Ref OutcomesTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref ConfigTable
+      Events:
+        DailyLabel:
+          Type: Schedule
+          Properties:
+            Name: gp-labeler-schedule
+            Description: Daily Gerchik-Perchik outcome labeling pass.
+            Schedule: !Ref LabelScheduleExpression
+            Enabled: !If [ScheduleIsEnabled, true, false]
+
 # -----------------------------------------------------------------------------
 # Outputs — handy references for later phases and the seed runbook.
 # -----------------------------------------------------------------------------
@@ -255,3 +302,6 @@ Outputs:
   ScannerFunctionArn:
     Description: gp-scanner Lambda ARN.
     Value: !GetAtt ScannerFunction.Arn
+  LabelerFunctionArn:
+    Description: gp-labeler Lambda ARN.
+    Value: !GetAtt LabelerFunction.Arn

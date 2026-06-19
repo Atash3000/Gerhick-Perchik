@@ -123,3 +123,65 @@ test("openOutcome rethrows non-conditional errors", async () => {
   const store = createStore({ client: fakeClient({ throwError: boom }), outcomesTable: "T-out" });
   await assert.rejects(() => store.openOutcome(buyResult, {}), /kaboom/);
 });
+
+test("listOpenOutcomes scans for status=OPEN", async () => {
+  const items = [{ pk: "SIGNAL#MSFT#2026-06-18", sk: 1, status: "OPEN" }];
+  const client = { calls: [], async send(cmd) { this.calls.push(cmd.input); return { Items: items }; } };
+  const store = createStore({ client, outcomesTable: "T-out" });
+
+  const res = await store.listOpenOutcomes();
+  assert.deepEqual(res, items);
+  assert.equal(client.calls[0].TableName, "T-out");
+  assert.equal(client.calls[0].FilterExpression, "#s = :open");
+  assert.equal(client.calls[0].ExpressionAttributeValues[":open"], "OPEN");
+});
+
+test("listOpenOutcomes paginates until LastEvaluatedKey is exhausted", async () => {
+  let n = 0;
+  const client = {
+    calls: [],
+    async send(cmd) {
+      this.calls.push(cmd.input);
+      n += 1;
+      return n === 1
+        ? { Items: [{ pk: "a" }], LastEvaluatedKey: { pk: "a" } }
+        : { Items: [{ pk: "b" }] };
+    },
+  };
+  const store = createStore({ client, outcomesTable: "T-out" });
+
+  const res = await store.listOpenOutcomes();
+  assert.equal(res.length, 2);
+  assert.equal(client.calls.length, 2);
+  assert.deepEqual(client.calls[1].ExclusiveStartKey, { pk: "a" });
+});
+
+test("closeOutcome updates label fields, guarded by status=OPEN", async () => {
+  const client = { calls: [], async send(cmd) { this.calls.push(cmd.input); return {}; } };
+  const store = createStore({ client, outcomesTable: "T-out" });
+
+  const r = await store.closeOutcome("SIGNAL#MSFT#2026-06-18", 123, {
+    outcome: "TARGET", profitPct: 9.7, daysHeld: 3,
+  });
+
+  assert.equal(r.closed, true);
+  const inp = client.calls[0];
+  assert.equal(inp.TableName, "T-out");
+  assert.deepEqual(inp.Key, { pk: "SIGNAL#MSFT#2026-06-18", sk: 123 });
+  assert.equal(inp.ConditionExpression, "#s = :open");
+  assert.match(inp.UpdateExpression, /^SET /);
+  assert.equal(inp.ExpressionAttributeNames["#s"], "status");
+  assert.equal(inp.ExpressionAttributeValues[":closed"], "CLOSED");
+  assert.equal(inp.ExpressionAttributeNames["#outcome"], "outcome");
+  assert.equal(inp.ExpressionAttributeValues[":outcome"], "TARGET");
+});
+
+test("closeOutcome on an already-closed row returns closed:false (no throw)", async () => {
+  const err = new Error("already closed");
+  err.name = "ConditionalCheckFailedException";
+  const store = createStore({ client: { async send() { throw err; } }, outcomesTable: "T-out" });
+
+  const r = await store.closeOutcome("pk", 1, { outcome: "STOP" });
+  assert.equal(r.closed, false);
+  assert.match(r.reason, /not open/);
+});

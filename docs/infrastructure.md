@@ -53,8 +53,10 @@ Read at the start of every run; **never** hardcoded in the Lambdas. Seeded from
 [`seed/config.json`](../seed/config.json):
 
 `buyScoreThreshold`, `atrStopMultiple`, `minRiskReward`, `maxCorrelatedPositions`,
-`alertMode`, `feeBps`, `slippageBps`. All **provisional** until Phase 8. `alertMode`
-starts `observe` and is only ever flipped to `live` by a human.
+`alertMode`, `feeBps`, `slippageBps`, `timeoutTradingDays`. All **provisional**
+until Phase 8. `alertMode` starts `observe` and is only ever flipped to `live` by
+a human. `timeoutTradingDays` (default 60) is the labeler's max holding window
+before a signal is closed as TIMEOUT — see [`labeling.md`](./labeling.md).
 
 ## Scanner function (skeleton)
 

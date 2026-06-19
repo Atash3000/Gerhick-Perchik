@@ -13,7 +13,12 @@
 // per record (see CLAUDE.md: never write two different records under one key).
 
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  DynamoDBDocumentClient,
+  PutCommand,
+  ScanCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { STRATEGY_VERSION } from "./version.mjs";
 
 // Whole days since the Unix epoch for a YYYY-MM-DD date (UTC). Used as the
@@ -97,6 +102,58 @@ export function createStore({ client, snapshotsTable, outcomesTable } = {}) {
       } catch (err) {
         if (err?.name === "ConditionalCheckFailedException") {
           return { opened: false, reason: "already open", pk: item.pk };
+        }
+        throw err;
+      }
+    },
+
+    // All OPEN outcome rows (the labeler's work queue). Small table → paginated
+    // scan with a status filter.
+    async listOpenOutcomes() {
+      const items = [];
+      let ExclusiveStartKey;
+      do {
+        const out = await doc.send(
+          new ScanCommand({
+            TableName: outTable,
+            FilterExpression: "#s = :open",
+            ExpressionAttributeNames: { "#s": "status" },
+            ExpressionAttributeValues: { ":open": "OPEN" },
+            ExclusiveStartKey,
+          })
+        );
+        items.push(...(out.Items ?? []));
+        ExclusiveStartKey = out.LastEvaluatedKey;
+      } while (ExclusiveStartKey);
+      return items;
+    },
+
+    // Close an outcome with its label fields. Guarded by status = OPEN so a
+    // double-run (or a race) can't relabel an already-closed signal.
+    async closeOutcome(pk, sk, fields) {
+      const sets = ["#s = :closed", "labeledAt = :labeledAt"];
+      const names = { "#s": "status" };
+      const values = { ":closed": "CLOSED", ":labeledAt": new Date().toISOString(), ":open": "OPEN" };
+      for (const [k, v] of Object.entries(fields)) {
+        sets.push(`#${k} = :${k}`);
+        names[`#${k}`] = k;
+        values[`:${k}`] = v;
+      }
+      try {
+        await doc.send(
+          new UpdateCommand({
+            TableName: outTable,
+            Key: { pk, sk },
+            UpdateExpression: "SET " + sets.join(", "),
+            ExpressionAttributeNames: names,
+            ExpressionAttributeValues: values,
+            ConditionExpression: "#s = :open",
+          })
+        );
+        return { closed: true };
+      } catch (err) {
+        if (err?.name === "ConditionalCheckFailedException") {
+          return { closed: false, reason: "not open" };
         }
         throw err;
       }
