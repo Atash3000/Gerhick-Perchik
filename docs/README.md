@@ -84,3 +84,11 @@ npm install
 npm test            # unit tests (node:test)
 npm run sample:msft # fetch+score MSFT live (needs AWS creds for SSM read)
 ```
+
+## CI/CD
+
+Pull requests run validation (`npm test`, `sam validate`, `sam build`) with no AWS
+access; merging to `main` deploys the SAM stack via GitHub OIDC, gated by a
+required-reviewer `production` environment. Deploy ships code/infra only — it never
+flips `alertMode`. Setup and the one-time AWS trust bootstrap are in
+[`cicd.md`](./cicd.md).
