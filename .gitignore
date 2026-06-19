@@ -1,5 +1,8 @@
 node_modules/
 .aws-sam/
-*.log
-.DS_Store
 .env
+.env.*
+*.pem
+aws-credentials*
+.DS_Store
+samconfig.local.toml

@@ -219,3 +219,18 @@ Do not skip ahead. Never go live on unvalidated thresholds.
 - Ship a single-key data table, or any data table without `Retain`.
 - Score on stale data, label from fixed checkpoints, or report cost-free profit.
 - Send "BUY" or go live before Phase 8's data exists.
+
+---
+
+## Git workflow
+- One feature branch per build-order phase: `git checkout -b phase-1-marketdata`.
+- Commit in small, working increments. Conventional messages:
+  `feat: …`, `fix: …`, `test: …`, `chore: …`, `docs: …`.
+- Before each commit, run `git status` and `git diff` and show me the diff.
+  Never commit secrets (they live in SSM) or anything in `.gitignore`.
+- At the end of each phase, when tests are green, push the branch and open a PR
+  so I get a reviewable diff. Do not merge to `main` yourself — I merge after review.
+- Never `git push --force`, never force-push to `main`, never rewrite shared history.
+- When you find or knowingly leave a bug/limitation, open a GitHub Issue
+  describing it and reference it in the commit/PR (`fixes #12`). Don't bury
+  TODOs only in code comments — surface them as Issues so we can track them.
