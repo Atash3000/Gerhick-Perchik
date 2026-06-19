@@ -1,0 +1,10 @@
+[
+  { "pk": "TICKER#MSFT", "ticker": "MSFT", "sector": "Technology", "enabled": true, "qualityTier": "A" },
+  { "pk": "TICKER#AAPL", "ticker": "AAPL", "sector": "Technology", "enabled": true, "qualityTier": "A" },
+  { "pk": "TICKER#NVDA", "ticker": "NVDA", "sector": "Technology", "enabled": true, "qualityTier": "A" },
+  { "pk": "TICKER#JPM",  "ticker": "JPM",  "sector": "Financials", "enabled": true, "qualityTier": "A" },
+  { "pk": "TICKER#XOM",  "ticker": "XOM",  "sector": "Energy",     "enabled": true, "qualityTier": "B" },
+  { "pk": "TICKER#UNH",  "ticker": "UNH",  "sector": "HealthCare", "enabled": true, "qualityTier": "B" },
+  { "pk": "TICKER#WMT",  "ticker": "WMT",  "sector": "Consumer",   "enabled": true, "qualityTier": "B" },
+  { "pk": "TICKER#CAT",  "ticker": "CAT",  "sector": "Industrials","enabled": true, "qualityTier": "B" }
+]

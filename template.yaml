@@ -1,0 +1,241 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+# =============================================================================
+# Gerchik-Perchik — disciplined technical-analysis trading-signal bot.
+#
+#   "Math decides. AI only explains."
+#
+# Phase 3 scope (this file): the four data tables (all Retain) + the scanner
+# Lambda skeleton + its schedule and IAM. NO alerts, NO narration, NO go-live.
+# Tables carry Retain policies because the accumulated history and the tuned
+# config ARE the project — they must survive a table replacement or stack delete.
+#
+# Build order reminder (see CLAUDE.md):
+#   3 (here)  tables + scanner skeleton; seed config + watchlist; sam validate
+#   4         scanner writes snapshots + opens outcome rows; NO alerts
+#   5         labeler; 6 telegram + narration; 7 control; 8 tune; 9 human go-live
+# =============================================================================
+
+Description: >
+  Gerchik-Perchik technical-analysis signal bot — Phase 3: data tables (Retain)
+  and scanner skeleton. Deterministic scoring decides; the LLM (Phase 6) only
+  narrates a locked payload.
+
+# -----------------------------------------------------------------------------
+# Parameters — externalised so paths/schedule can change without touching code.
+# -----------------------------------------------------------------------------
+Parameters:
+  # API keys are REUSED from the account-level Edge Hunter params (see CLAUDE.md).
+  # We pass the SSM *paths* here; the Lambda reads + decrypts the values at
+  # runtime. The values themselves never enter the template, code, or logs.
+  TiingoKeyPath:
+    Type: String
+    Default: /edge-hunter/tiingo/api_key
+    Description: SSM path to the Tiingo API key (EOD history).
+  FinnhubKeyPath:
+    Type: String
+    Default: /edge-hunter/finnhub/api_key
+    Description: SSM path to the Finnhub API key (earnings, sector).
+
+  # Daily scan time, in UTC. The US cash close is 16:00 ET and Tiingo EOD data
+  # settles ~18:00 ET, so we scan well after that. NOTE: this is a fixed UTC
+  # cron — it does NOT auto-adjust for US daylight-saving. 22:30 UTC is ~18:30 ET
+  # (EDT) / ~17:30 ET (EST); revisit if the close-to-scan gap ever matters.
+  # On/off is controlled at RUNTIME by the control Lambda toggling this rule
+  # (Phase 7), never by redeploying with a different value.
+  ScanScheduleExpression:
+    Type: String
+    Default: cron(30 22 ? * MON-FRI *)
+    Description: UTC cron for the post-close daily scan.
+
+# -----------------------------------------------------------------------------
+# Globals — defaults inherited by every function.
+# -----------------------------------------------------------------------------
+Globals:
+  Function:
+    Runtime: nodejs22.x          # matches the codebase (Node 22 ESM)
+    Handler: handler.handler     # every function exports `handler` from handler.mjs
+    Architectures:
+      - arm64                    # cheaper/faster; SDK + our pure JS are arch-agnostic
+    MemorySize: 512
+    Timeout: 120                 # a full watchlist scan makes many feed calls
+    Tags:
+      Project: gerchik-perchik   # required on every resource
+    Environment:
+      Variables:
+        # Table names are injected so code never hardcodes them.
+        SNAPSHOTS_TABLE: !Ref SnapshotsTable
+        OUTCOMES_TABLE: !Ref OutcomesTable
+        CONFIG_TABLE: !Ref ConfigTable
+        WATCHLIST_TABLE: !Ref WatchlistTable
+        # SSM paths (references only — never the secret values).
+        TIINGO_KEY_PATH: !Ref TiingoKeyPath
+        FINNHUB_KEY_PATH: !Ref FinnhubKeyPath
+
+Resources:
+  # ===========================================================================
+  # Data tables. PAY_PER_REQUEST (spiky daily workload, no capacity planning).
+  # DeletionPolicy + UpdateReplacePolicy = Retain on ALL of them: the history and
+  # tuned config must outlive any table replacement or stack delete.
+  # ===========================================================================
+
+  # Every name scored gets a daily snapshot row.
+  # pk = TICKER#<ticker> (S), sk = <epoch day> (N). No TTL — history is the point.
+  SnapshotsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: gp-snapshots
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: N
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      Tags:
+        - Key: Project
+          Value: gerchik-perchik
+
+  # One row per opened signal; the labeler fills the outcome later.
+  # pk = SIGNAL#<ticker>#<entryDate> (S), sk = <entry epoch> (N).
+  OutcomesTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: gp-outcomes
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: N
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      Tags:
+        - Key: Project
+          Value: gerchik-perchik
+
+  # Exactly one live tunables row: pk = "CONFIG" (S), sk = "ACTIVE" (S).
+  # Read at the start of every run; never hardcoded in the Lambdas.
+  ConfigTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: gp-config
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      Tags:
+        - Key: Project
+          Value: gerchik-perchik
+
+  # The universe to scan: pk = TICKER#<ticker> (S). Scanner only reads enabled rows.
+  # `sector` feeds the correlation gate.
+  WatchlistTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: gp-watchlist
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      Tags:
+        - Key: Project
+          Value: gerchik-perchik
+
+  # ===========================================================================
+  # Scanner Lambda (skeleton). Phase 3 wires the read path + schedule + IAM.
+  # Phase 4 adds the snapshot/outcome writes. It never alerts (Phase 6+).
+  # ===========================================================================
+  ScannerFunction:
+    Type: AWS::Serverless::Function
+    # esbuild bundles the handler together with the imported ../shared/*.mjs
+    # modules. The AWS SDK v3 ships in the nodejs22.x runtime, so it stays
+    # external (not bundled) to keep the artifact small.
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: esm
+        Target: es2022
+        Sourcemap: false
+        EntryPoints:
+          - handler.mjs
+        External:
+          - '@aws-sdk/*'
+    Properties:
+      FunctionName: gp-scanner
+      CodeUri: lambdas/scanner/
+      Description: Daily post-close scan — score the watchlist, snapshot, (Phase 6) alert.
+      Policies:
+        # Least privilege: read ONLY the two specific SSM key params it needs.
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource:
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${TiingoKeyPath}'
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${FinnhubKeyPath}'
+        # Snapshots + outcomes are written (Phase 4); config + watchlist are read-only.
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SnapshotsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref OutcomesTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref ConfigTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref WatchlistTable
+      Events:
+        DailyScan:
+          # Classic EventBridge schedule rule. The control Lambda flips this rule
+          # on/off at runtime (Phase 7) — we do NOT enable/disable by redeploying.
+          Type: Schedule
+          Properties:
+            Name: gp-scanner-schedule
+            Description: Daily post-close Gerchik-Perchik scan (toggled via Telegram).
+            Schedule: !Ref ScanScheduleExpression
+            Enabled: true
+
+# -----------------------------------------------------------------------------
+# Outputs — handy references for later phases and the seed runbook.
+# -----------------------------------------------------------------------------
+Outputs:
+  SnapshotsTableName:
+    Description: Daily score snapshots.
+    Value: !Ref SnapshotsTable
+  OutcomesTableName:
+    Description: Signal outcomes (labeled by the Phase 5 labeler).
+    Value: !Ref OutcomesTable
+  ConfigTableName:
+    Description: Single live tunables row (pk=CONFIG, sk=ACTIVE).
+    Value: !Ref ConfigTable
+  WatchlistTableName:
+    Description: Scan universe (enabled rows only).
+    Value: !Ref WatchlistTable
+  ScannerFunctionArn:
+    Description: gp-scanner Lambda ARN.
+    Value: !GetAtt ScannerFunction.Arn

@@ -1,0 +1,13 @@
+{
+  "pk": "CONFIG",
+  "sk": "ACTIVE",
+  "buyScoreThreshold": 60,
+  "atrStopMultiple": 1.5,
+  "minRiskReward": 2.0,
+  "maxCorrelatedPositions": 3,
+  "alertMode": "observe",
+  "feeBps": 10,
+  "slippageBps": 5,
+  "strategyVersion": "gp-1.0.0",
+  "note": "PROVISIONAL tunables — thresholds/empiricalEdge are guesses until backed by gp-outcomes (Phase 8). alertMode MUST start as 'observe'; only a human flips it to 'live'."
+}

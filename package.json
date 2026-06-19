@@ -9,11 +9,18 @@
   },
   "scripts": {
     "test": "node --test",
-    "sample:msft": "node scripts/sample-msft.mjs MSFT"
+    "sample:msft": "node scripts/sample-msft.mjs MSFT",
+    "validate": "sam validate --region us-east-1 --lint",
+    "build": "PATH=\"$PWD/node_modules/.bin:$PATH\" sam build",
+    "seed": "node scripts/seed.mjs",
+    "seed:apply": "node scripts/seed.mjs --apply"
   },
   "dependencies": {
-    "@aws-sdk/client-ssm": "^3.620.0",
     "@aws-sdk/client-dynamodb": "^3.620.0",
+    "@aws-sdk/client-ssm": "^3.620.0",
     "@aws-sdk/lib-dynamodb": "^3.620.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
   }
 }

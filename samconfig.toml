@@ -1,0 +1,23 @@
+# SAM CLI configuration. Used by `sam build` / `sam deploy`.
+# NOTE: deploying creates billable AWS resources and Retain tables that survive a
+# stack delete. Deploy is a deliberate, human-run step (see docs/infrastructure.md).
+version = 0.1
+
+[default.global.parameters]
+stack_name = "gerchik-perchik"
+
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.validate.parameters]
+lint = true
+
+[default.deploy.parameters]
+stack_name = "gerchik-perchik"
+region = "us-east-1"
+resolve_s3 = true
+s3_prefix = "gerchik-perchik"
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+tags = "Project=gerchik-perchik"
