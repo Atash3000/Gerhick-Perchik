@@ -186,6 +186,56 @@ Resources:
                   - iam:TagRole
                   - iam:UntagRole
                 Resource: !Sub arn:aws:iam::${AWS::AccountId}:role/gerchik-perchik-*
+              # --- Phase 6 ops alarm: log groups + metric filters on gp-* ---
+              - Sid: LogsForStack
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
+                  - logs:PutRetentionPolicy
+                  - logs:TagResource
+                  - logs:ListTagsForResource
+                  - logs:PutMetricFilter
+                  - logs:DeleteMetricFilter
+                Resource:
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/gp-*
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/gp-*:*
+              - Sid: LogsDescribe
+                Effect: Allow
+                Action:
+                  - logs:DescribeLogGroups
+                  - logs:DescribeMetricFilters
+                Resource: '*'
+              # --- Phase 6 ops alarm: SNS topic gp-* ---
+              - Sid: SnsForStack
+                Effect: Allow
+                Action:
+                  - sns:CreateTopic
+                  - sns:DeleteTopic
+                  - sns:GetTopicAttributes
+                  - sns:SetTopicAttributes
+                  - sns:Subscribe
+                  - sns:Unsubscribe
+                  - sns:ListSubscriptionsByTopic
+                  - sns:TagResource
+                  - sns:UntagResource
+                  - sns:ListTagsForResource
+                Resource: !Sub arn:aws:sns:${AWS::Region}:${AWS::AccountId}:gp-*
+              # --- Phase 6 ops alarm: CloudWatch alarm gp-* ---
+              - Sid: CloudWatchAlarmsForStack
+                Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricAlarm
+                  - cloudwatch:DeleteAlarms
+                  - cloudwatch:TagResource
+                  - cloudwatch:UntagResource
+                  - cloudwatch:ListTagsForResource
+                Resource: !Sub arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:gp-*
+              - Sid: CloudWatchDescribe
+                Effect: Allow
+                Action:
+                  - cloudwatch:DescribeAlarms
+                Resource: '*'
 
 Outputs:
   DeployRoleArn:

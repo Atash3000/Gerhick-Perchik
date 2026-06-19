@@ -38,6 +38,22 @@ Parameters:
     Default: /edge-hunter/finnhub/api_key
     Description: SSM path to the Finnhub API key (earnings, sector).
 
+  # Phase 6: narration + Telegram. Bot token + Anthropic key are reused from
+  # Edge Hunter; the chat id is a NEW dedicated-channel param created by a human
+  # (see docs/alerts.md) — the stack only references it by path for IAM scoping.
+  AnthropicKeyPath:
+    Type: String
+    Default: /edge-hunter/anthropic/api_key
+    Description: SSM path to the Anthropic API key (narration).
+  TelegramBotTokenPath:
+    Type: String
+    Default: /edge-hunter/telegram/bot_token
+    Description: SSM path to the reused Telegram bot token.
+  TelegramChatIdPath:
+    Type: String
+    Default: /gerchik/telegram/chat_id
+    Description: SSM path to the DEDICATED Gerchik-Perchik Telegram chat id.
+
   # Daily scan time, in UTC. The US cash close is 16:00 ET and Tiingo EOD data
   # settles ~18:00 ET, so we scan well after that. NOTE: this is a fixed UTC
   # cron — it does NOT auto-adjust for US daylight-saving. 22:30 UTC is ~18:30 ET
@@ -212,7 +228,9 @@ Resources:
       CodeUri: lambdas/scanner/
       Description: Daily post-close scan — score the watchlist, snapshot, (Phase 6) alert.
       Policies:
-        # Least privilege: read ONLY the two specific SSM key params it needs.
+        # Least privilege: read ONLY the specific SSM params it needs — market
+        # feeds (Tiingo/Finnhub) plus narration + Telegram (Anthropic key, bot
+        # token, dedicated chat id).
         - Version: '2012-10-17'
           Statement:
             - Effect: Allow
@@ -220,6 +238,9 @@ Resources:
               Resource:
                 - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${TiingoKeyPath}'
                 - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${FinnhubKeyPath}'
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${AnthropicKeyPath}'
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${TelegramBotTokenPath}'
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${TelegramChatIdPath}'
         # Snapshots + outcomes are written (Phase 4); config + watchlist are read-only.
         - DynamoDBCrudPolicy:
             TableName: !Ref SnapshotsTable
@@ -283,6 +304,71 @@ Resources:
             Schedule: !Ref LabelScheduleExpression
             Enabled: !If [ScheduleIsEnabled, true, false]
 
+  # ===========================================================================
+  # Ops alarm (Phase 6). Both functions log the keyword `gp_scan_failed` on any
+  # failure; a metric filter on each log group feeds a single custom metric, and
+  # an alarm fires to the ops SNS topic on sustained failures. The SNS → control
+  # Lambda → Telegram delivery is wired in Phase 7 (the control Lambda is the
+  # subscriber); for now the topic + alarm exist and can be subscribed manually.
+  # ===========================================================================
+  ScannerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/gp-scanner
+      RetentionInDays: 90
+
+  LabelerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/gp-labeler
+      RetentionInDays: 90
+
+  OpsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: gp-ops-alerts
+      Tags:
+        - Key: Project
+          Value: gerchik-perchik
+
+  ScannerFailureFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref ScannerLogGroup
+      FilterPattern: gp_scan_failed
+      MetricTransformations:
+        - MetricNamespace: GerchikPerchik
+          MetricName: ScanFailures
+          MetricValue: '1'
+          DefaultValue: 0
+
+  LabelerFailureFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LabelerLogGroup
+      FilterPattern: gp_scan_failed
+      MetricTransformations:
+        - MetricNamespace: GerchikPerchik
+          MetricName: ScanFailures
+          MetricValue: '1'
+          DefaultValue: 0
+
+  ScanFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: gp-scan-failures
+      AlarmDescription: Sustained gp_scan_failed events from the scanner or labeler.
+      Namespace: GerchikPerchik
+      MetricName: ScanFailures
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 3
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref OpsTopic
+
 # -----------------------------------------------------------------------------
 # Outputs — handy references for later phases and the seed runbook.
 # -----------------------------------------------------------------------------
@@ -305,3 +391,6 @@ Outputs:
   LabelerFunctionArn:
     Description: gp-labeler Lambda ARN.
     Value: !GetAtt LabelerFunction.Arn
+  OpsTopicArn:
+    Description: SNS topic for ops alerts (Phase 7 control Lambda subscribes here).
+    Value: !Ref OpsTopic
