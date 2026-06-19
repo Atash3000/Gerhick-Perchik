@@ -23,6 +23,7 @@ import { DynamoDBDocumentClient, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import { getActiveConfig } from "../shared/config.mjs";
 import { getMarketData } from "../shared/marketdata.mjs";
 import { score, DECISION } from "../shared/scoring.mjs";
+import { createStore } from "../shared/store.mjs";
 import { STRATEGY_VERSION } from "../shared/version.mjs";
 
 const REGIME_TICKER = "SPY"; // broad-market proxy for the regime gate
@@ -63,7 +64,9 @@ async function getMarketRegime() {
   if (!spy || spy.fresh === false || typeof spy.ma200 !== "number") {
     return null;
   }
-  return { spyBelow200ma: spy.close < spy.ma200 };
+  // asOf is the canonical scan trading day, reused to key snapshots whose own
+  // data may be missing (NO_DATA names).
+  return { spyBelow200ma: spy.close < spy.ma200, asOf: spy.dataAsOf };
 }
 
 export async function handler() {
@@ -84,8 +87,12 @@ export async function handler() {
   // 3) Universe.
   const watchlist = await loadEnabledWatchlist(process.env.WATCHLIST_TABLE);
 
-  // 4) Score each name. Per-ticker failures must not abort the whole scan.
+  // 4) Score + persist each name. Per-ticker failures must not abort the scan.
+  const store = createStore();
   const tally = { BUY_CANDIDATE: 0, NO_SIGNAL: 0, NO_DATA: 0, ERROR: 0 };
+  let snapshotsWritten = 0;
+  let outcomesOpened = 0;
+  let writeErrors = 0;
   const candidates = [];
 
   for (const entry of watchlist) {
@@ -104,10 +111,20 @@ export async function handler() {
       const result = score(md, config, marketContext);
       tally[result.decision] = (tally[result.decision] ?? 0) + 1;
 
-      // PHASE 4: write a gp-snapshots row for `result` here
-      //          (pk=TICKER#<t>, sk=<epoch day>, + strategyVersion + dataAsOf).
-      // PHASE 4: if BUY_CANDIDATE, open a gp-outcomes row.
-      // PHASE 6: enqueue an OBSERVE-mode Telegram message for candidates.
+      // Persist: one daily snapshot per scored name; open an outcome row for each
+      // BUY_CANDIDATE (idempotent). A write failure for one name is logged and
+      // skipped — it must not sink the scan. Still NO alerts (that's Phase 6).
+      try {
+        await store.writeSnapshot(result, { asOf: regime.asOf, sector: entry.sector });
+        snapshotsWritten += 1;
+        if (result.decision === DECISION.BUY_CANDIDATE) {
+          const opened = await store.openOutcome(result, { sector: entry.sector });
+          if (opened.opened) outcomesOpened += 1;
+        }
+      } catch (werr) {
+        writeErrors += 1;
+        console.error(`gp_scan_failed: persist ${entry.ticker}: ${werr.message}`);
+      }
 
       if (result.decision === DECISION.BUY_CANDIDATE) {
         candidates.push({ ticker: entry.ticker, score: result.score, rr: result.riskReward });
@@ -126,6 +143,9 @@ export async function handler() {
     finishedAt: new Date().toISOString(),
     scanned: watchlist.length,
     tally,
+    snapshotsWritten,
+    outcomesOpened,
+    writeErrors,
     candidates,
     alertMode: config.alertMode, // observe/live — alerts themselves are Phase 6
   };
