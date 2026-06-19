@@ -49,6 +49,21 @@ Parameters:
     Default: cron(30 22 ? * MON-FRI *)
     Description: UTC cron for the post-close daily scan.
 
+  # Deploy-time baseline for the scan schedule. Defaults OFF so deploys never
+  # silently start the scanner before the pipeline is ready (no snapshots until
+  # Phase 4, no alerts until Phase 6). Set to 'true' (or override at deploy) when
+  # the system is ready to run. NOTE: this is the baseline CloudFormation applies
+  # on each deploy; the Phase 7 control Lambda toggles the rule at runtime WITHIN
+  # a deploy cycle, but a redeploy resets it to this value.
+  ScheduleEnabled:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'false'
+    Description: Whether the scanner schedule rule is enabled at deploy time.
+
+Conditions:
+  ScheduleIsEnabled: !Equals [!Ref ScheduleEnabled, 'true']
+
 # -----------------------------------------------------------------------------
 # Globals — defaults inherited by every function.
 # -----------------------------------------------------------------------------
@@ -211,14 +226,15 @@ Resources:
             TableName: !Ref WatchlistTable
       Events:
         DailyScan:
-          # Classic EventBridge schedule rule. The control Lambda flips this rule
-          # on/off at runtime (Phase 7) — we do NOT enable/disable by redeploying.
+          # Classic EventBridge schedule rule. Deploy-time baseline comes from the
+          # ScheduleEnabled parameter (default OFF). The Phase 7 control Lambda
+          # toggles this rule at runtime; a redeploy resets it to the baseline.
           Type: Schedule
           Properties:
             Name: gp-scanner-schedule
             Description: Daily post-close Gerchik-Perchik scan (toggled via Telegram).
             Schedule: !Ref ScanScheduleExpression
-            Enabled: true
+            Enabled: !If [ScheduleIsEnabled, true, false]
 
 # -----------------------------------------------------------------------------
 # Outputs — handy references for later phases and the seed runbook.

@@ -21,3 +21,6 @@ s3_prefix = "gerchik-perchik"
 capabilities = "CAPABILITY_IAM"
 confirm_changeset = true
 tags = "Project=gerchik-perchik"
+# Scanner schedule stays OFF on every deploy until the pipeline is ready
+# (flip to true here, reviewed, when going to Phase 6+). See template.yaml.
+parameter_overrides = "ScheduleEnabled=false"

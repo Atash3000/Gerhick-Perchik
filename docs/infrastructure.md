@@ -43,8 +43,12 @@ starts `observe` and is only ever flipped to `live` by a human.
   bundles the imported `../shared/*.mjs` modules; the AWS SDK v3 is left external
   (provided by the runtime).
 - **Schedule:** a classic EventBridge rule (`Type: Schedule`), default
-  `cron(30 22 ? * MON-FRI *)` (UTC, ~post-close). Runtime on/off is done by the
-  control Lambda toggling this rule (Phase 7) — never by redeploying.
+  `cron(30 22 ? * MON-FRI *)` (UTC, ~post-close). Its deploy-time on/off baseline
+  is the `ScheduleEnabled` parameter, **default `false`** (pinned to `false` in
+  `samconfig.toml`) so deploys never start the scanner before the pipeline is
+  ready. Flip it to `true` (reviewed) when going to Phase 6+. The Phase 7 control
+  Lambda toggles the rule at runtime within a deploy cycle; a redeploy resets it
+  to this baseline.
 - **IAM (least privilege):** `ssm:GetParameter` on only the two specific
   `/edge-hunter/*` key ARNs; CRUD on `gp-snapshots` + `gp-outcomes`; read-only on
   `gp-config` + `gp-watchlist`.
