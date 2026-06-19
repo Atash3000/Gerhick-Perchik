@@ -1,0 +1,19 @@
+{
+  "name": "gerchik-perchik",
+  "version": "1.0.0",
+  "description": "Disciplined technical-analysis trading-signal bot. Math decides; AI only explains.",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test",
+    "sample:msft": "node scripts/sample-msft.mjs MSFT"
+  },
+  "dependencies": {
+    "@aws-sdk/client-ssm": "^3.620.0",
+    "@aws-sdk/client-dynamodb": "^3.620.0",
+    "@aws-sdk/lib-dynamodb": "^3.620.0"
+  }
+}
