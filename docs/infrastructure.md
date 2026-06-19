@@ -27,6 +27,26 @@ whole point and must survive a table replacement or a stack delete.
 > Keys must be unique per record. Never write two different records under one key
 > (that silently overwrites).
 
+### What the scanner writes (Phase 4)
+
+Persistence lives in `lambdas/shared/store.mjs` (used by the scanner now, the
+labeler later):
+
+- **`gp-snapshots`** — one row per scored name per trading day.
+  `pk = TICKER#<ticker>`, `sk = epochDay(dataAsOf)` (whole days since epoch, so a
+  same-day re-run overwrites rather than duplicates). Stores the full result:
+  `decision`, `score`, `breakdown`, `entry`/`stop`/`target`/`riskReward`, `gates`,
+  `reason`, `sector`, plus `strategyVersion` and `dataAsOf`. Every decision is
+  snapshotted — including `NO_SIGNAL`, gate rejections, and `NO_DATA`.
+- **`gp-outcomes`** — one row per `BUY_CANDIDATE`, opened with `status: "OPEN"`.
+  `pk = SIGNAL#<ticker>#<entryDate>`, `sk = epochMs(entryDate)`. Written with a
+  `attribute_not_exists(pk)` condition so a re-run never re-opens or clobbers an
+  existing (possibly already-labeled) outcome. The Phase 5 labeler fills in the
+  result fields.
+
+Per-name write failures are logged (`gp_scan_failed`) and skipped — one bad write
+never sinks the scan. Still **no alerts** (that's Phase 6).
+
 ### `gp-config` tunables (the ACTIVE row)
 
 Read at the start of every run; **never** hardcoded in the Lambdas. Seeded from

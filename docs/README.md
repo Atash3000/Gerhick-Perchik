@@ -64,8 +64,8 @@ gerchik-perchik/
 |------:|------|--------|
 | 1 | `marketdata.mjs` + freshness; verify one ticker | ✅ done |
 | 2 | `version.mjs`, `config.mjs`, `scoring.mjs`; unit tests | ✅ done |
-| 3 | `template.yaml` (4 Retain tables) + scanner skeleton; seed files; `sam validate` | ✅ this doc set |
-| 4 | scanner writes snapshots + opens outcomes; **no alerts** | ⬜ next |
+| 3 | `template.yaml` (4 Retain tables) + scanner skeleton; seed files; `sam validate` | ✅ done |
+| 4 | scanner writes snapshots + opens outcomes; **no alerts** | ✅ done |
 | 5 | labeler: first-touch, pessimistic fills, after-cost P&L | ⬜ |
 | 6 | `telegram.mjs` + narration; OBSERVE alerts + ops alarm | ⬜ |
 | 7 | control: `/start /stop /mode /enable /disable /stats` | ⬜ |
