@@ -66,7 +66,7 @@ gerchik-perchik/
 | 2 | `version.mjs`, `config.mjs`, `scoring.mjs`; unit tests | ✅ done |
 | 3 | `template.yaml` (4 Retain tables) + scanner skeleton; seed files; `sam validate` | ✅ done |
 | 4 | scanner writes snapshots + opens outcomes; **no alerts** | ✅ done |
-| 5 | labeler: first-touch, pessimistic fills, after-cost P&L | ⬜ |
+| 5 | labeler: first-touch, pessimistic fills, after-cost P&L | ✅ done |
 | 6 | `telegram.mjs` + narration; OBSERVE alerts + ops alarm | ⬜ |
 | 7 | control: `/start /stop /mode /enable /disable /stats` | ⬜ |
 | 8 | accumulate outcomes; tune `gp-config` from real data | ⬜ |

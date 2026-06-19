@@ -275,9 +275,8 @@ function isoDaysAgo(days, now = new Date()) {
   return d.toISOString().slice(0, 10);
 }
 
-// Tiingo EOD daily history → ascending adjusted OHLCV bars.
-async function fetchTiingoBars(ticker, token, now = new Date()) {
-  const startDate = isoDaysAgo(560, now); // ~18 months of calendar days
+// Tiingo EOD daily history → ascending adjusted OHLCV bars from startDate.
+async function fetchTiingoBars(ticker, token, startDate) {
   const url =
     `https://api.tiingo.com/tiingo/daily/${encodeURIComponent(ticker)}/prices` +
     `?startDate=${startDate}&format=json&resampleFreq=daily&token=${token}`;
@@ -295,6 +294,17 @@ async function fetchTiingoBars(ticker, token, now = new Date()) {
       volume: r.adjVolume ?? r.volume,
     }))
     .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// Public: raw ascending adjusted daily bars for a ticker. The labeler uses this
+// to walk a signal forward from its entry date. `startDate` defaults to ~18
+// months back (enough for indicator math); pass the entry date for labeling.
+// Reads the Tiingo key from SSM (cached); the same adjusted series is used here
+// and in getMarketData so entry/stop/target comparisons stay consistent.
+export async function getDailyBars(ticker, { startDate, now = new Date() } = {}) {
+  const token = await getSecret(SSM_PATHS.tiingo);
+  const start = startDate ?? isoDaysAgo(560, now);
+  return fetchTiingoBars(ticker, token, start);
 }
 
 // Finnhub earnings calendar → whole days until the next future earnings date
@@ -343,12 +353,7 @@ async function fetchSector(ticker, token) {
 // scoring can short-circuit to NO_DATA. Never throws on staleness — only on I/O.
 export async function getMarketData(ticker, opts = {}) {
   const now = opts.now ?? new Date();
-  const [tiingoKey, finnhubKey] = await Promise.all([
-    getSecret(SSM_PATHS.tiingo),
-    getSecret(SSM_PATHS.finnhub),
-  ]);
-
-  const bars = await fetchTiingoBars(ticker, tiingoKey, now);
+  const bars = await getDailyBars(ticker, { now });
   const dataAsOf = bars[bars.length - 1].date;
   const expected = mostRecentTradingDay(now);
   const fresh = dataAsOf >= expected;
@@ -379,6 +384,7 @@ export async function getMarketData(ticker, opts = {}) {
     bars, atr, last.close, avgVolume30, PARAMS
   );
 
+  const finnhubKey = await getSecret(SSM_PATHS.finnhub);
   const [daysToEarnings, sector] = await Promise.all([
     fetchDaysToEarnings(ticker, finnhubKey, now),
     fetchSector(ticker, finnhubKey),
