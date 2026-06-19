@@ -1,0 +1,61 @@
+# CD — runs after a PR merges to main. Builds and deploys the SAM stack to AWS.
+#
+# Auth: GitHub OIDC. GitHub mints a short-lived token, AWS lets it assume a
+# scoped IAM role. NO long-lived AWS keys are stored in GitHub.
+#
+# Safety:
+#   - Gated by the `production` GitHub Environment (add a required reviewer there
+#     so each deploy waits for a human click).
+#   - The job is SKIPPED until you set the repo variable AWS_DEPLOY_ROLE_ARN, so
+#     merging this PR can't trigger a failing/half-configured deploy.
+#   - Deploy != go-live. This ships CODE/INFRA only; it never changes alertMode.
+#     Going live stays a human Telegram `/mode live` against gp-config.
+#   - Seeding (gp-config / gp-watchlist) is NOT done here — it's a separate,
+#     manual, idempotent step (scripts/seed.mjs --apply).
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write # required to request the OIDC token
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Skip entirely until the deploy role ARN is configured (post-bootstrap).
+    if: ${{ vars.AWS_DEPLOY_ROLE_ARN != '' }}
+    environment: production # add a required reviewer on this environment
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      # Last-line safety: never deploy a red tree.
+      - name: Unit tests
+        run: npm test
+
+      - name: Assume AWS deploy role (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: Build & deploy
+        run: |
+          export PATH="$PWD/node_modules/.bin:$PATH"
+          sam build
+          sam deploy --no-confirm-changeset --no-fail-on-empty-changeset

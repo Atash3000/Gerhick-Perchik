@@ -1,0 +1,196 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+# =============================================================================
+# ONE-TIME CI/CD trust bootstrap for Gerchik-Perchik.
+#
+# Creates:
+#   1. A GitHub OIDC identity provider in this account (skippable if one already
+#      exists — set CreateOIDCProvider=false and pass the existing ARN).
+#   2. A scoped IAM role that GitHub Actions assumes (via OIDC) to deploy the SAM
+#      stack. NO long-lived AWS keys ever leave AWS.
+#
+# Trust is restricted to THIS repo's `production` GitHub Environment, so only a
+# run that passed the environment's required-reviewer gate can assume the role.
+#
+# Deploy this ONCE (human-run, needs IAM-create permissions — see docs/cicd.md):
+#   aws cloudformation deploy \
+#     --template-file ci/github-oidc-bootstrap.yaml \
+#     --stack-name gp-cicd-bootstrap \
+#     --capabilities CAPABILITY_NAMED_IAM \
+#     --region us-east-1
+# Then put the output role ARN into the GitHub repo variable AWS_DEPLOY_ROLE_ARN.
+#
+# NOTE: the deploy-role policy is scoped to gerchik-perchik / gp-* resources. The
+# FIRST deploy may surface a missing action or two (IAM least-privilege is fiddly);
+# tighten/extend here rather than widening to admin. Tracked as a follow-up issue.
+# =============================================================================
+
+Parameters:
+  GitHubOrg:
+    Type: String
+    Default: Atash3000
+  GitHubRepo:
+    Type: String
+    Default: Gerhick-Perchik
+  GitHubEnvironment:
+    Type: String
+    Default: production
+    Description: The GitHub Environment whose runs may assume the deploy role.
+  CreateOIDCProvider:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'true'
+    Description: Set 'false' if this account already has the GitHub OIDC provider.
+  ExistingOIDCProviderArn:
+    Type: String
+    Default: ''
+    Description: Required only when CreateOIDCProvider=false.
+
+Conditions:
+  ShouldCreateProvider: !Equals [!Ref CreateOIDCProvider, 'true']
+
+Resources:
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: ShouldCreateProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      # GitHub's well-known intermediate-CA thumbprints. AWS validates GitHub's
+      # token signature against its own trust store regardless, but the field is
+      # required to be non-empty.
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+        - 1c58a3a8518e8759bf075b76b750d4f2df264fcd
+
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: gp-github-deploy-role
+      Description: Assumed by GitHub Actions (OIDC) to deploy the gerchik-perchik SAM stack.
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - ShouldCreateProvider
+                - !Ref GitHubOIDCProvider
+                - !Ref ExistingOIDCProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                # Only the production environment of THIS repo (the reviewer-gated path).
+                token.actions.githubusercontent.com:sub:
+                  !Sub repo:${GitHubOrg}/${GitHubRepo}:environment:${GitHubEnvironment}
+      Tags:
+        - Key: Project
+          Value: gerchik-perchik
+      Policies:
+        - PolicyName: gp-sam-deploy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # --- CloudFormation control plane (resource-level support is partial). ---
+              - Sid: CloudFormation
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStackResource
+                  - cloudformation:DescribeStackResources
+                  - cloudformation:GetTemplate
+                  - cloudformation:GetTemplateSummary
+                  - cloudformation:ListStackResources
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:ValidateTemplate
+                Resource: '*'
+              # --- SAM-managed artifact bucket. ---
+              - Sid: SamArtifactBucket
+                Effect: Allow
+                Action:
+                  - s3:CreateBucket
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                  - s3:GetBucketPolicy
+                  - s3:PutBucketPolicy
+                  - s3:PutBucketTagging
+                  - s3:GetBucketVersioning
+                  - s3:PutBucketVersioning
+                  - s3:GetEncryptionConfiguration
+                  - s3:PutEncryptionConfiguration
+                  - s3:PutBucketPublicAccessBlock
+                Resource:
+                  - arn:aws:s3:::aws-sam-cli-managed-default*
+                  - arn:aws:s3:::aws-sam-cli-managed-default*/*
+              # --- The gp-scanner Lambda (and future gp-* functions). ---
+              - Sid: Lambda
+                Effect: Allow
+                Action: lambda:*
+                Resource: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:gp-*
+              # --- The four gp-* data tables. ---
+              - Sid: DynamoDB
+                Effect: Allow
+                Action:
+                  - dynamodb:CreateTable
+                  - dynamodb:DeleteTable
+                  - dynamodb:DescribeTable
+                  - dynamodb:UpdateTable
+                  - dynamodb:DescribeContinuousBackups
+                  - dynamodb:UpdateContinuousBackups
+                  - dynamodb:DescribeTimeToLive
+                  - dynamodb:ListTagsOfResource
+                  - dynamodb:TagResource
+                  - dynamodb:UntagResource
+                Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/gp-*
+              # --- The scanner's EventBridge schedule rule. ---
+              - Sid: EventBridge
+                Effect: Allow
+                Action:
+                  - events:PutRule
+                  - events:DeleteRule
+                  - events:DescribeRule
+                  - events:PutTargets
+                  - events:RemoveTargets
+                  - events:ListTargetsByRule
+                  - events:TagResource
+                  - events:UntagResource
+                Resource: !Sub arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/gp-*
+              # --- IAM roles that SAM creates for the functions (stack-name-prefixed). ---
+              - Sid: IamForStackRoles
+                Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:PassRole
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:TagRole
+                  - iam:UntagRole
+                Resource: !Sub arn:aws:iam::${AWS::AccountId}:role/gerchik-perchik-*
+
+Outputs:
+  DeployRoleArn:
+    Description: Put this into the GitHub repo variable AWS_DEPLOY_ROLE_ARN.
+    Value: !GetAtt DeployRole.Arn
+  OIDCProviderArn:
+    Description: The GitHub OIDC provider ARN (created or referenced).
+    Value: !If [ShouldCreateProvider, !Ref GitHubOIDCProvider, !Ref ExistingOIDCProviderArn]

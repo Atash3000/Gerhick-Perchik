@@ -1,0 +1,42 @@
+# CI — runs on every pull request to main. PURE VALIDATION: no AWS credentials,
+# no deploy. This is the gate that enforces "tests green before merge".
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read # no id-token here — this job never touches AWS
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      - uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      # Template validation + lint. Needs no AWS account access.
+      - name: sam validate
+        run: sam validate --region us-east-1 --lint
+
+      # Prove the scanner bundles (esbuild is a devDependency from `npm ci`).
+      - name: sam build
+        run: |
+          export PATH="$PWD/node_modules/.bin:$PATH"
+          sam build
