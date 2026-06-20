@@ -64,6 +64,23 @@ test("writeSnapshot writes one keyed row with strategyVersion + dataAsOf", async
   assert.deepEqual(ref, { table: "T-snap", pk: "TICKER#MSFT", sk: epochDay("2026-06-18") });
 });
 
+test("writeSnapshot records raw metrics from marketData for tuning", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });
+  const md = {
+    rsi: 58, ma50: 95, ma200: 90, atr: 2,
+    volume: 1_500_000, avgVolume30: 1_000_000,
+    nearestSupport: { price: 98 }, nearestResistance: { price: 110 }, daysToEarnings: 20,
+  };
+  await store.writeSnapshot(buyResult, { asOf: "2026-06-18", sector: "Technology", marketData: md });
+  const { Item } = client.calls[0];
+  assert.equal(Item.metrics.rsi, 58);
+  assert.equal(Item.metrics.volumeRatio, 1.5);
+  assert.equal(Item.metrics.nearestSupport, 98);
+  assert.equal(Item.metrics.nearestResistance, 110);
+  assert.equal(Item.metrics.daysToEarnings, 20);
+});
+
 test("writeSnapshot falls back to asOf when the result has no dataAsOf (NO_DATA)", async () => {
   const client = fakeClient();
   const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });

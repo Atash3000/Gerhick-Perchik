@@ -167,3 +167,33 @@ test("NO_DATA: missing/null market data object → NO_DATA", () => {
   const r = score(null, CONFIG, cleanContext);
   assert.equal(r.decision, DECISION.NO_DATA);
 });
+
+test("GATE: HIGH news is normalized (any case) and rejected", () => {
+  const r = score(baseMarketData(), CONFIG, { ...cleanContext, newsLevel: "HIGH" });
+  assert.equal(r.decision, DECISION.NO_SIGNAL);
+  assert.equal(r.gates.news, false);
+});
+
+test("NO_DATA: missing config tunable → NO_DATA with a clear reason", () => {
+  const cfg = { ...CONFIG };
+  delete cfg.atrStopMultiple;
+  const r = score(baseMarketData(), cfg, cleanContext);
+  assert.equal(r.decision, DECISION.NO_DATA);
+  assert.match(r.reason, /config: atrStopMultiple/);
+});
+
+test("NO_DATA: non-positive ATR → NO_DATA", () => {
+  const md = baseMarketData();
+  md.atr = 0;
+  const r = score(md, CONFIG, cleanContext);
+  assert.equal(r.decision, DECISION.NO_DATA);
+  assert.match(r.reason, /non-positive atr/);
+});
+
+test("setup score ignores a support that is not below price", () => {
+  const md = baseMarketData();
+  md.nearestSupport = { price: 105, touches: 3, strength: 0.6, brokenSupport: false }; // above close 100
+  const r = score(md, CONFIG, cleanContext);
+  assert.equal(r.decision, DECISION.BUY_CANDIDATE); // resistance 110 still a valid target
+  assert.equal(r.breakdown.setup, 4); // reward-room only; no support proximity/strength credit
+});

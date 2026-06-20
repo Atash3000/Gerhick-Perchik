@@ -119,7 +119,7 @@ export async function handler() {
       // BUY_CANDIDATE (idempotent). A write failure for one name is logged and
       // skipped — it must not sink the scan. Still NO alerts (that's Phase 6).
       try {
-        await store.writeSnapshot(result, { asOf: regime.asOf, sector: entry.sector });
+        await store.writeSnapshot(result, { asOf: regime.asOf, sector: entry.sector, marketData: md });
         snapshotsWritten += 1;
         if (result.decision === DECISION.BUY_CANDIDATE) {
           const opened = await store.openOutcome(result, { sector: entry.sector });
