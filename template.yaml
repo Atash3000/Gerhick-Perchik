@@ -38,24 +38,24 @@ Parameters:
     Default: /edge-hunter/finnhub/api_key
     Description: SSM path to the Finnhub API key (earnings, sector).
 
-  # Phase 6: narration + Telegram. Bot token + Anthropic key are reused from
-  # Edge Hunter; the chat id is a NEW dedicated-channel param created by a human
-  # (see docs/alerts.md) — the stack only references it by path for IAM scoping.
+  # Phase 6: narration + Telegram. The Anthropic key is reused from Edge Hunter;
+  # the Telegram bot token + chat id are DEDICATED /gerchik-perchik/ params (a
+  # separate bot + channel from Edge Hunter). Referenced by path for IAM scoping.
   AnthropicKeyPath:
     Type: String
     Default: /edge-hunter/anthropic/api_key
     Description: SSM path to the Anthropic API key (narration).
   TelegramBotTokenPath:
     Type: String
-    Default: /edge-hunter/telegram/bot_token
-    Description: SSM path to the reused Telegram bot token.
+    Default: /gerchik-perchik/telegram/bot_token
+    Description: SSM path to the DEDICATED Gerchik-Perchik Telegram bot token.
   TelegramChatIdPath:
     Type: String
-    Default: /gerchik/telegram/chat_id
+    Default: /gerchik-perchik/telegram/chat_id
     Description: SSM path to the DEDICATED Gerchik-Perchik Telegram chat id.
   TelegramWebhookSecretPath:
     Type: String
-    Default: /gerchik/telegram/webhook_secret
+    Default: /gerchik-perchik/telegram/webhook_secret
     Description: SSM path to the Telegram webhook secret token (protects the control URL).
 
   # Daily scan time, in UTC. The US cash close is 16:00 ET and Tiingo EOD data

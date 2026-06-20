@@ -27,10 +27,10 @@ baseline (off), so re-issue `/start` after a deploy until you flip the baseline.
 
 - The Function URL is `AuthType: NONE` (Telegram must reach it), so it's protected
   by Telegram's **secret-token header** — every update must carry
-  `X-Telegram-Bot-Api-Secret-Token` equal to `/gerchik/telegram/webhook_secret`,
+  `X-Telegram-Bot-Api-Secret-Token` equal to `/gerchik-perchik/telegram/webhook_secret`,
   or the request is rejected `401`.
 - Commands are only honored when `message.chat.id` matches the dedicated
-  `/gerchik/telegram/chat_id`. Anything else is silently acked.
+  `/gerchik-perchik/telegram/chat_id`. Anything else is silently acked.
 - **`/mode live` is a human act.** The control Lambda sets `alertMode: live` only
   in response to a human `/mode live` from the dedicated channel — this is the one
   sanctioned path to go live. The agent/code never sets live on its own.
@@ -50,7 +50,7 @@ the Phase 6 ops chain.
 
 1. **Create the webhook secret** (any random string you choose):
    ```bash
-   aws ssm put-parameter --name /gerchik/telegram/webhook_secret \
+   aws ssm put-parameter --name /gerchik-perchik/telegram/webhook_secret \
      --type SecureString --value "<random secret>" --region us-east-1
    ```
 2. After the deploy, get the control URL from the stack outputs:
@@ -61,7 +61,7 @@ the Phase 6 ops chain.
 3. **Register the webhook with Telegram** (binds the URL + secret to the bot). The
    bot token lives in SSM; run this from a trusted shell, not committed anywhere:
    ```bash
-   TOKEN=$(aws ssm get-parameter --name /edge-hunter/telegram/bot_token \
+   TOKEN=$(aws ssm get-parameter --name /gerchik-perchik/telegram/bot_token \
      --with-decryption --query Parameter.Value --output text --region us-east-1)
    curl -s "https://api.telegram.org/bot$TOKEN/setWebhook" \
      -d "url=<ControlFunctionUrl>" \

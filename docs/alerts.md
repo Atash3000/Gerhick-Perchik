@@ -47,9 +47,9 @@ as of 2026-06-18 · gp-1.0.0
 
 ## Secrets (read by path from SSM)
 
-- `/edge-hunter/anthropic/api_key` — narration (reused)
-- `/edge-hunter/telegram/bot_token` — reused bot
-- `/gerchik/telegram/chat_id` — **dedicated channel**, created in Phase 6 (below)
+- `/edge-hunter/anthropic/api_key` — narration (reused from Edge Hunter)
+- `/gerchik-perchik/telegram/bot_token` — **dedicated** Gerchik-Perchik bot
+- `/gerchik-perchik/telegram/chat_id` — **dedicated** channel
 
 ## Ops alarm
 
@@ -63,21 +63,9 @@ The SNS → control Lambda → Telegram delivery is wired in **Phase 7** (the co
 Lambda subscribes to the topic). Until then the topic + alarm exist; you can add a
 temporary email subscription to `gp-ops-alerts` if you want paging now.
 
-## Human steps before this runs end-to-end
+## Setup status
 
-1. **Create the dedicated chat id** (one-time; the value isn't a code secret but
-   the channel is yours to choose):
-   ```bash
-   aws ssm put-parameter --name /gerchik/telegram/chat_id \
-     --type String --value "<your dedicated channel chat id>" --region us-east-1
-   ```
-2. **Re-run the CI deploy-role bootstrap** — Phase 6 adds Logs/SNS/CloudWatch
-   resources, so the deploy role needs the new permissions before the next deploy:
-   ```bash
-   aws cloudformation deploy \
-     --template-file ci/github-oidc-bootstrap.yaml \
-     --stack-name gp-cicd-bootstrap \
-     --capabilities CAPABILITY_NAMED_IAM --region us-east-1
-   ```
-   Do this **before** merging the Phase 6 PR, or the deploy will fail on missing
-   `logs:`/`sns:`/`cloudwatch:` permissions.
+The dedicated bot token and chat id live at `/gerchik-perchik/telegram/bot_token`
+and `/gerchik-perchik/telegram/chat_id` (already created). The CI deploy-role
+bootstrap has been re-run with the Logs/SNS/CloudWatch permissions Phase 6 needs.
+Going live in observe mode is just `/start` once the scanner is ready to run.

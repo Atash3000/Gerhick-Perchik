@@ -22,8 +22,8 @@ import { createStore } from "../shared/store.mjs";
 import { STRATEGY_VERSION } from "../shared/version.mjs";
 import { parseCommand, computeStats, formatStats, formatAlarm, HELP } from "./commands.mjs";
 
-const WEBHOOK_SECRET_PATH = "/gerchik/telegram/webhook_secret";
-const CHAT_ID_PATH = "/gerchik/telegram/chat_id";
+const WEBHOOK_SECRET_PATH = "/gerchik-perchik/telegram/webhook_secret";
+const CHAT_ID_PATH = "/gerchik-perchik/telegram/chat_id";
 
 export async function handler(event) {
   // 1) SNS ops alarm → Telegram.

@@ -2,15 +2,16 @@
 // (Phase 6). Reuses the Edge Hunter bot token, but a DEDICATED chat id so technical
 // alerts don't land in the Edge Hunter feed.
 //
-// Secrets read by path from SSM (decrypted in memory, never logged):
-//   - /edge-hunter/telegram/bot_token  (reused)
-//   - /gerchik/telegram/chat_id        (created in Phase 6 — see docs/alerts.md)
+// Secrets read by path from SSM (decrypted in memory, never logged). Dedicated
+// Gerchik-Perchik bot + channel (separate from Edge Hunter):
+//   - /gerchik-perchik/telegram/bot_token
+//   - /gerchik-perchik/telegram/chat_id
 
 import { getParameter } from "./ssm.mjs";
 
 export const TELEGRAM_PATHS = {
-  botToken: "/edge-hunter/telegram/bot_token",
-  chatId: "/gerchik/telegram/chat_id",
+  botToken: "/gerchik-perchik/telegram/bot_token",
+  chatId: "/gerchik-perchik/telegram/chat_id",
 };
 
 // Build the Bot API sendMessage request (pure — unit-testable without network or
