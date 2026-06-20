@@ -16,7 +16,7 @@ score(marketData, config, marketContext) -> result
 
 ```
 freshness + input validation
-        │  (stale / missing / non-finite → NO_DATA, nothing scored)
+        │  (stale / missing / non-finite / non-positive field / missing config → NO_DATA)
         ▼
 gates  (reject, don't score — fail any → NO_SIGNAL, full stop)
         ▼

@@ -40,6 +40,11 @@ const RSI_HEALTHY_LOW = 40;
 const RSI_HEALTHY_HIGH = 70;
 
 const REQUIRED_NUMERIC = ["close", "ma50", "ma200", "atr", "rsi", "volume", "avgVolume30"];
+// Fields that must be strictly positive (a 0/negative here means bad data, not a
+// tradeable state). ATR=0 would also be caught later by the validRisk gate, but
+// rejecting up front gives a clearer reason.
+const REQUIRED_POSITIVE = ["close", "ma50", "ma200", "atr", "avgVolume30"];
+const REQUIRED_CONFIG = ["atrStopMultiple", "minRiskReward", "maxCorrelatedPositions", "buyScoreThreshold"];
 
 function noData(marketData, reason) {
   return {
@@ -85,7 +90,15 @@ export function score(marketData, config, marketContext = {}) {
       return noData(marketData, `missing/invalid field: ${k}`);
     }
   }
+  for (const k of REQUIRED_POSITIVE) {
+    if (marketData[k] <= 0) return noData(marketData, `non-positive ${k}`);
+  }
   if (!config) return noData(marketData, "missing config");
+  for (const k of REQUIRED_CONFIG) {
+    if (typeof config[k] !== "number" || !Number.isFinite(config[k])) {
+      return noData(marketData, `missing/invalid config: ${k}`);
+    }
+  }
 
   const {
     close, ma50, ma200, atr, rsi, volume, avgVolume30,
@@ -95,7 +108,8 @@ export function score(marketData, config, marketContext = {}) {
   const ctx = {
     spyBelow200ma: marketContext.spyBelow200ma ?? false,
     correlatedPositions: marketContext.correlatedPositions ?? 0,
-    newsLevel: marketContext.newsLevel ?? "none",
+    // Normalize so "HIGH"/"High" still trip the news gate.
+    newsLevel: String(marketContext.newsLevel ?? "none").toLowerCase(),
   };
 
   const atrStopMultiple = config.atrStopMultiple;
@@ -192,7 +206,9 @@ function scoreTrend(close, ma50, ma200) {
 // setup (20): entry quality near support + level strength + reward headroom.
 function scoreSetup(close, atr, nearestSupport, riskReward, minRiskReward) {
   let s = 0;
-  if (nearestSupport && !nearestSupport.brokenSupport) {
+  // Defensive: only credit a support that is genuinely below price (marketdata
+  // guarantees this, but never award setup points for a mis-classified level).
+  if (nearestSupport && !nearestSupport.brokenSupport && nearestSupport.price < close) {
     const dist = close - nearestSupport.price; // >0 since support is below price
     const band = Math.min(0.03 * close, 1.0 * atr); // "near" = min(3%, 1*ATR)
     if (dist <= band) s += 8;

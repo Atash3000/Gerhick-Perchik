@@ -32,6 +32,28 @@ export function epochMs(dateStr) {
   return Date.parse(`${dateStr}T00:00:00Z`);
 }
 
+// Extract the raw market-data inputs worth keeping on a snapshot for later
+// tuning/backtest analysis. Tolerates a partial/NO_DATA marketData object.
+export function snapshotMetrics(md) {
+  const m = md ?? {};
+  const volumeRatio =
+    typeof m.volume === "number" && m.avgVolume30 > 0
+      ? Math.round((m.volume / m.avgVolume30) * 100) / 100
+      : null;
+  return {
+    rsi: m.rsi ?? null,
+    ma50: m.ma50 ?? null,
+    ma200: m.ma200 ?? null,
+    atr: m.atr ?? null,
+    volume: m.volume ?? null,
+    avgVolume30: m.avgVolume30 ?? null,
+    volumeRatio,
+    nearestSupport: m.nearestSupport?.price ?? null,
+    nearestResistance: m.nearestResistance?.price ?? null,
+    daysToEarnings: m.daysToEarnings ?? null,
+  };
+}
+
 // Build a store bound to a DynamoDB document client + table names. Pass a fake
 // client in tests; in the Lambda, defaults read the env + a real client.
 export function createStore({ client, snapshotsTable, outcomesTable, watchlistTable } = {}) {
@@ -44,7 +66,7 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
     // One daily snapshot per scored name. `asOf` (YYYY-MM-DD) is the trading day
     // the row is keyed to — the data's dataAsOf, with a caller-supplied fallback
     // for the NO_DATA case where the result has none.
-    async writeSnapshot(result, { asOf, sector = null } = {}) {
+    async writeSnapshot(result, { asOf, sector = null, marketData = null } = {}) {
       const day = result.dataAsOf ?? asOf;
       if (!day) throw new Error(`cannot snapshot ${result.ticker}: no as-of date`);
       const item = {
@@ -62,6 +84,9 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
         target: result.target ?? null,
         riskReward: result.riskReward ?? null,
         gates: result.gates ?? null,
+        // Raw inputs for Phase 8 analysis (recorded for EVERY decision, so we can
+        // study what predicts outcomes even for gate-rejected names).
+        metrics: snapshotMetrics(marketData),
         sector,
         scannedAt: new Date().toISOString(),
       };

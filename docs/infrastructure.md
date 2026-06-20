@@ -36,8 +36,10 @@ labeler later):
   `pk = TICKER#<ticker>`, `sk = epochDay(dataAsOf)` (whole days since epoch, so a
   same-day re-run overwrites rather than duplicates). Stores the full result:
   `decision`, `score`, `breakdown`, `entry`/`stop`/`target`/`riskReward`, `gates`,
-  `reason`, `sector`, plus `strategyVersion` and `dataAsOf`. Every decision is
-  snapshotted — including `NO_SIGNAL`, gate rejections, and `NO_DATA`.
+  `reason`, `sector`, plus `strategyVersion` and `dataAsOf`, plus a `metrics` block
+  (raw inputs: `rsi`, `atr`, `volumeRatio`, level prices, `daysToEarnings`) for
+  Phase 8 analysis. Every decision is snapshotted — including `NO_SIGNAL`, gate
+  rejections, and `NO_DATA`.
 - **`gp-outcomes`** — one row per `BUY_CANDIDATE`, opened with `status: "OPEN"`.
   `pk = SIGNAL#<ticker>#<entryDate>`, `sk = epochMs(entryDate)`. Written with a
   `attribute_not_exists(pk)` condition so a re-run never re-opens or clobbers an
