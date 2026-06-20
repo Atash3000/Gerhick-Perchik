@@ -91,6 +91,16 @@ export async function handler() {
 
   // 4) Score + persist each name. Per-ticker failures must not abort the scan.
   const store = createStore();
+
+  // Correlation gate input: count currently-OPEN outcomes per sector (measured at
+  // scan start; new opens within this same scan are not retro-counted — the cap is
+  // provisional). Feeds marketContext.correlatedPositions per ticker.
+  const openBySector = {};
+  for (const o of await store.listOpenOutcomes()) {
+    const sec = o.sector ?? "unknown";
+    openBySector[sec] = (openBySector[sec] ?? 0) + 1;
+  }
+
   const tally = { BUY_CANDIDATE: 0, NO_SIGNAL: 0, NO_DATA: 0, ERROR: 0 };
   let snapshotsWritten = 0;
   let outcomesOpened = 0;
@@ -105,9 +115,9 @@ export async function handler() {
 
       const marketContext = {
         spyBelow200ma: regime.spyBelow200ma,
-        // PHASE 5: real count of open outcomes in this sector. 0 until then.
-        correlatedPositions: 0,
-        // PHASE (later): real news classification. Clean tape until then.
+        // Live: open outcomes already held in this ticker's sector.
+        correlatedPositions: openBySector[entry.sector ?? "unknown"] ?? 0,
+        // PHASE (later): real news classification (issue #1). Clean tape until then.
         newsLevel: "none",
         sector: entry.sector,
       };

@@ -71,23 +71,26 @@ Lambda with IAM read access can use them). REUSE them; do NOT duplicate or
 re-enter keys. The repo references them by **path**; the Lambdas read them at
 runtime via `ssm:GetParameter`. AWS access comes from the local profile.
 
-Data / AI keys — reuse the existing params:
+Data / AI keys — reuse the existing Edge Hunter params:
 
 - `/edge-hunter/tiingo/api_key` (EOD history → MA/ATR/RSI + path for labeling)
 - `/edge-hunter/finnhub/api_key` (quotes, earnings calendar)
 - `/edge-hunter/anthropic/api_key` (narration — Phase 6)
 
-Telegram (Phase 6 only): reuse `/edge-hunter/telegram/bot_token`, but use a
-DEDICATED channel — create `/gerchik/telegram/chat_id` for it then, so technical
-alerts don't land in the Edge Hunter feed. Nothing to create until Phase 6.
+Telegram — DEDICATED Gerchik-Perchik bot + channel (separate from Edge Hunter, so
+technical alerts don't land in the Edge Hunter feed):
+
+- `/gerchik-perchik/telegram/bot_token`
+- `/gerchik-perchik/telegram/chat_id`
+- `/gerchik-perchik/telegram/webhook_secret` (protects the control Function URL)
 
 **Hard rules:**
 
 - Never fetch (`--with-decryption` to print), print, log, commit, or hardcode a
   secret value. Reference by path only.
 - Never request API keys from the user; the local AWS profile authorizes you.
-- IAM: grant each Lambda `ssm:GetParameter` on only the specific `/edge-hunter/*`
-  (and, from Phase 6, `/gerchik/telegram/*`) ARNs it needs.
+- IAM: grant each Lambda `ssm:GetParameter` on only the specific
+  `/edge-hunter/*` and `/gerchik-perchik/telegram/*` ARNs it needs.
 - Verify reality before assuming: `aws sts get-caller-identity`,
   `cat samconfig.toml`,
   `aws ssm get-parameters-by-path --path /edge-hunter --query "Parameters[].Name"`.
@@ -107,7 +110,8 @@ point of this project and must survive a table replacement or stack delete.
   Includes `strategyVersion`.
 - `gp-config` — `pk = "CONFIG"` (S), `sk = "ACTIVE"` (S). One live row holding
   tunables: `buyScoreThreshold`, `atrStopMultiple`, `minRiskReward`,
-  `maxCorrelatedPositions`, `alertMode`, `feeBps`, `slippageBps`. Read at the
+  `maxCorrelatedPositions`, `alertMode`, `feeBps`, `slippageBps`,
+  `timeoutTradingDays`. Read at the
   start of every run; never hardcode these in the Lambdas.
 - `gp-watchlist` — `pk = TICKER#<ticker>` (S). Fields: `sector`, `enabled`,
   `qualityTier`. The scanner only scans `enabled: true` rows. `sector` feeds the
