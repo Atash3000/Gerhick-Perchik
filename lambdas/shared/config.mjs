@@ -7,7 +7,7 @@
 // config object as an injected argument and stays a pure function.
 
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 // The tunable keys expected on the ACTIVE row. Listed for documentation/validation
 // only — values come from DynamoDB, never from here.
@@ -43,4 +43,26 @@ export async function getActiveConfig(tableName = process.env.CONFIG_TABLE || "g
     throw new Error(`gp-config ACTIVE row missing tunables: ${missing.join(", ")}`);
   }
   return item;
+}
+
+// Set alertMode on the ACTIVE row. Only 'observe' | 'live' are valid.
+// IMPORTANT: this is invoked by the control Lambda in response to a HUMAN
+// Telegram `/mode` command — that is the only sanctioned way to set 'live'. The
+// agent must never call this with 'live' itself.
+export async function setAlertMode(mode, opts = {}) {
+  if (mode !== "observe" && mode !== "live") {
+    throw new Error(`invalid alertMode: ${mode} (expected observe|live)`);
+  }
+  const client = opts.client ?? docClient();
+  const tableName = opts.tableName ?? process.env.CONFIG_TABLE ?? "gp-config";
+  await client.send(
+    new UpdateCommand({
+      TableName: tableName,
+      Key: { pk: "CONFIG", sk: "ACTIVE" },
+      UpdateExpression: "SET alertMode = :m",
+      ExpressionAttributeValues: { ":m": mode },
+      ConditionExpression: "attribute_exists(pk)",
+    })
+  );
+  return { alertMode: mode };
 }
