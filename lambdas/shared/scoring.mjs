@@ -188,7 +188,28 @@ export function score(marketData, config, marketContext = {}) {
     stop: round(stop, 2),
     target: round(target, 2),
     riskReward,
+    sizing: computeSizing(entry, stop, config),
     gates,
+  };
+}
+
+// Van-Tharp-style fixed-fractional sizing (deterministic): risk a fixed % of the
+// account per trade; shares = floor(riskBudget / per-share-risk). Returns null if
+// the sizing tunables aren't configured, so it's purely additive/informational.
+function computeSizing(entry, stop, config) {
+  const accountSize = config.accountSize;
+  const riskPct = config.riskPctPerTrade;
+  if (!(accountSize > 0) || !(riskPct > 0)) return null;
+  const perShareRisk = entry - stop;
+  if (!(perShareRisk > 0)) return null;
+  const riskBudget = accountSize * (riskPct / 100);
+  const shares = Math.floor(riskBudget / perShareRisk);
+  if (shares <= 0) return null;
+  return {
+    shares,
+    notional: round(shares * entry, 2),
+    riskAmount: round(shares * perShareRisk, 2),
+    riskPct,
   };
 }
 

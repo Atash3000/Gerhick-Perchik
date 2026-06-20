@@ -190,6 +190,21 @@ test("NO_DATA: non-positive ATR → NO_DATA", () => {
   assert.match(r.reason, /non-positive atr/);
 });
 
+test("position sizing computed when account tunables are present", () => {
+  const cfg = { ...CONFIG, accountSize: 10000, riskPctPerTrade: 1 };
+  const r = score(baseMarketData(), cfg, cleanContext);
+  // entry 100, stop 97 → per-share risk 3; budget 100 → shares floor(100/3)=33
+  assert.equal(r.sizing.shares, 33);
+  assert.equal(r.sizing.riskAmount, 99); // 33 × 3
+  assert.equal(r.sizing.notional, 3300); // 33 × 100
+  assert.equal(r.sizing.riskPct, 1);
+});
+
+test("sizing is null when account tunables are absent (informational only)", () => {
+  const r = score(baseMarketData(), CONFIG, cleanContext);
+  assert.equal(r.sizing, null);
+});
+
 test("setup score ignores a support that is not below price", () => {
   const md = baseMarketData();
   md.nearestSupport = { price: 105, touches: 3, strength: 0.6, brokenSupport: false }; // above close 100

@@ -20,6 +20,8 @@ export const TUNABLE_KEYS = [
   "feeBps",
   "slippageBps",
   "timeoutTradingDays", // labeler: max trading days to hold before TIMEOUT
+  "accountSize", // position sizing: notional account base
+  "riskPctPerTrade", // position sizing: % of account risked per trade
 ];
 
 let _doc;

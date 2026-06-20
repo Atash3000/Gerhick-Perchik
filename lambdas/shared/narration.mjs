@@ -31,9 +31,9 @@ export const LOCKED_SYSTEM_PROMPT = [
   "- Use ONLY the data in the JSON. Invent nothing. Do not add or change any number.",
   "- Do NOT give financial advice. Do NOT say 'buy', 'sell', or 'guaranteed'.",
   "- Frame it as a 'possible setup', never a recommendation or a sure thing.",
-  "- One sentence, plain text, no emoji, no preamble, under 200 characters.",
+  "- 1-3 short sentences, plain text, no emoji, no preamble, under 400 characters.",
   "- The exact numbers are shown to the user separately, so do not list them all;",
-  "  just describe the setup qualitatively (e.g. trend, momentum).",
+  "  just describe the setup qualitatively (trend, momentum, support/resistance).",
 ].join("\n");
 
 // The minimal payload the model is allowed to see. Pure.
@@ -114,4 +114,110 @@ export function composeMessage(payload, narrationText) {
 
 function money(n) {
   return typeof n === "number" ? n.toFixed(2) : String(n);
+}
+
+function signedPct(a, b) {
+  if (!(b > 0) || typeof a !== "number") return "n/a";
+  const p = (a / b - 1) * 100;
+  return `${p >= 0 ? "+" : ""}${p.toFixed(1)}%`;
+}
+
+function formatMarketCap(millions) {
+  if (typeof millions !== "number" || millions <= 0) return "—";
+  if (millions >= 1e6) return `$${(millions / 1e6).toFixed(2)}T`;
+  if (millions >= 1e3) return `$${(millions / 1e3).toFixed(2)}B`;
+  return `$${Math.round(millions)}M`;
+}
+
+// Deterministic bullish / risk bullets derived from the facts (NOT the AI).
+export function buildBullets(result, md, config) {
+  const bullish = [];
+  const risks = [];
+  const r = md.avgVolume30 > 0 ? md.volume / md.avgVolume30 : null;
+
+  if (md.close > md.ma50 && md.close > md.ma200) {
+    bullish.push("Price above both 50MA and 200MA — uptrend intact");
+  } else if (md.close > md.ma200) {
+    bullish.push("Price above the 200MA");
+  }
+  bullish.push(`R:R ${result.riskReward}:1 (min ${config.minRiskReward})`);
+  if (md.nearestSupport && !md.nearestSupport.brokenSupport && md.nearestSupport.price < md.close) {
+    const band = Math.min(0.03 * md.close, md.atr);
+    if (md.close - md.nearestSupport.price <= band) {
+      bullish.push(`Near support $${money(md.nearestSupport.price)} (${md.nearestSupport.touches} touches)`);
+    }
+  }
+  if (r != null && r >= 1) bullish.push(`Volume ${r.toFixed(1)}× the 30-day average`);
+  if (md.rsi >= 50 && md.rsi <= 65) bullish.push(`RSI ${md.rsi} — healthy momentum`);
+  else if (md.rsi >= 40 && md.rsi <= 70) bullish.push(`RSI ${md.rsi} — constructive`);
+
+  if (result.riskReward < config.minRiskReward * 1.5) {
+    risks.push(`Reward room moderate (R:R ${result.riskReward})`);
+  }
+  if (typeof md.daysToEarnings === "number" && md.daysToEarnings <= 15) {
+    risks.push(`Earnings in ${md.daysToEarnings} days`);
+  }
+  if (md.rsi > 70) risks.push(`RSI ${md.rsi} — extended/overbought`);
+  if (!md.nearestSupport) risks.push("No nearby support below price — stop relies on ATR only");
+  risks.push("ATR-based stop; an overnight gap can fill worse than planned");
+
+  return { bullish, risks };
+}
+
+// Build the full richly-styled Telegram message DETERMINISTICALLY. Only `narration`
+// (the thesis) is AI-written; every number and bullet is derived here. Pure.
+export function composeRichMessage(result, md, config, mode, narration) {
+  const m = md ?? {};
+  const rangePct =
+    typeof m.low52 === "number" && typeof m.high52 === "number" && m.high52 > m.low52
+      ? Math.round(((m.close - m.low52) / (m.high52 - m.low52)) * 100)
+      : null;
+  const volR = m.avgVolume30 > 0 ? (m.volume / m.avgVolume30).toFixed(1) : "—";
+  const { bullish, risks } = buildBullets(result, m, config);
+
+  const lines = [
+    "🟢 GERCHIK-PERCHIK SIGNAL",
+    "━━━━━━━━━━━━━━━━━━━━",
+  ];
+  if (mode !== "live") lines.push(OBSERVE_PREFIX, "");
+  else lines.push("");
+
+  lines.push(`📊 ${result.ticker}${m.name ? ` — ${m.name}` : ""}`);
+  lines.push(`⬆️ LONG • Score: ${result.score}/100`);
+  if (m.sector) lines.push(`🏷 Sector: ${m.sector}`);
+
+  lines.push("", "💰 Market Context:");
+  lines.push(`Price: $${money(m.close)}${typeof m.pctChange === "number" ? ` (${m.pctChange >= 0 ? "+" : ""}${m.pctChange}%)` : ""}`);
+  if (typeof m.low52 === "number" && typeof m.high52 === "number") {
+    lines.push(`52w: $${money(m.low52)} – $${money(m.high52)}${rangePct != null ? ` (${rangePct}% of range)` : ""}`);
+  }
+  lines.push(`Market cap: ${formatMarketCap(m.marketCapMillions)}`);
+
+  lines.push("", "📈 Technicals:");
+  lines.push("Trend: above 50MA & 200MA ✓");
+  lines.push(`RSI(14): ${m.rsi}`);
+  if (m.nearestSupport) lines.push(`Support: $${money(m.nearestSupport.price)} (${m.nearestSupport.touches} touches)`);
+  lines.push(`Resistance: $${money(result.target)} (target)`);
+  lines.push(`ATR(14): $${money(m.atr)} • Vol: ${volR}× avg`);
+
+  lines.push("", "💡 Thesis:", (narration ?? "").trim() || "Technical setup flagged by the scoring model.");
+
+  lines.push("", "✅ Bullish:", ...bullish.map((b) => `• ${b}`));
+  lines.push("", "⚠️ Risks:", ...risks.map((b) => `• ${b}`));
+
+  lines.push("", "🎯 Trade Plan:");
+  lines.push(`Entry: $${money(result.entry)}`);
+  lines.push(`Stop: $${money(result.stop)} (${signedPct(result.stop, result.entry)})`);
+  lines.push(`Target: $${money(result.target)} (${signedPct(result.target, result.entry)}, ${result.riskReward}:1 R:R)`);
+  if (result.sizing) {
+    lines.push(
+      `Size: ${result.sizing.shares} shares ≈ $${money(result.sizing.notional)} • ` +
+        `Risk: $${money(result.sizing.riskAmount)} (${result.sizing.riskPct}%)`
+    );
+  } else {
+    lines.push("Size: — (position sizing not configured)");
+  }
+
+  lines.push("", `📅 as of ${result.dataAsOf} · ${result.strategyVersion}`);
+  return lines.join("\n");
 }
