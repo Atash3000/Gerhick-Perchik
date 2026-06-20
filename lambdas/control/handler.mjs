@@ -10,7 +10,7 @@
 // math live in commands.mjs (pure); this file is orchestration + I/O.
 //
 // Auth: the endpoint is protected by Telegram's secret-token header
-// (/gerchik/telegram/webhook_secret), and commands are only honored from the
+// (/gerchik-perchik/telegram/webhook_secret), and commands are only honored from the
 // configured dedicated chat id. /mode live is therefore a HUMAN action — the only
 // sanctioned way to go live.
 
