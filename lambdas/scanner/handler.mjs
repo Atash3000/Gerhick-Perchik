@@ -24,6 +24,8 @@ import { getActiveConfig } from "../shared/config.mjs";
 import { getMarketData } from "../shared/marketdata.mjs";
 import { score, DECISION } from "../shared/scoring.mjs";
 import { createStore } from "../shared/store.mjs";
+import { buildPayload, narrate, composeMessage, FALLBACK_NARRATION } from "../shared/narration.mjs";
+import { sendTelegram } from "../shared/telegram.mjs";
 import { STRATEGY_VERSION } from "../shared/version.mjs";
 
 const REGIME_TICKER = "SPY"; // broad-market proxy for the regime gate
@@ -93,6 +95,8 @@ export async function handler() {
   let snapshotsWritten = 0;
   let outcomesOpened = 0;
   let writeErrors = 0;
+  let alertsSent = 0;
+  let alertErrors = 0;
   const candidates = [];
 
   for (const entry of watchlist) {
@@ -128,6 +132,26 @@ export async function handler() {
 
       if (result.decision === DECISION.BUY_CANDIDATE) {
         candidates.push({ ticker: entry.ticker, score: result.score, rr: result.riskReward });
+
+        // OBSERVE-mode Telegram alert. Numbers are built deterministically from
+        // the result; the LLM only adds a flavor sentence (and on failure we use
+        // a fixed fallback, so the alert still sends). alertMode comes from config
+        // (observe by default) — going live is a human act, never set here.
+        try {
+          const payload = buildPayload(result, md, config.alertMode);
+          let flavor;
+          try {
+            flavor = await narrate(payload);
+          } catch (nerr) {
+            flavor = FALLBACK_NARRATION;
+            console.error(`gp_scan_failed: narrate ${entry.ticker}: ${nerr.message}`);
+          }
+          await sendTelegram(composeMessage(payload, flavor));
+          alertsSent += 1;
+        } catch (aerr) {
+          alertErrors += 1;
+          console.error(`gp_scan_failed: alert ${entry.ticker}: ${aerr.message}`);
+        }
       }
     } catch (err) {
       tally.ERROR += 1;
@@ -146,8 +170,10 @@ export async function handler() {
     snapshotsWritten,
     outcomesOpened,
     writeErrors,
+    alertsSent,
+    alertErrors,
     candidates,
-    alertMode: config.alertMode, // observe/live — alerts themselves are Phase 6
+    alertMode: config.alertMode, // observe (default) / live — live is a human act
   };
   console.log("gp_scan_summary", JSON.stringify(summary));
   return summary;

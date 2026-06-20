@@ -16,7 +16,7 @@
 //   - Adjusted OHLCV is used throughout so splits/dividends don't corrupt
 //     historical levels or indicator math.
 
-import { SSMClient, GetParameterCommand } from "@aws-sdk/client-ssm";
+import { getParameter } from "./ssm.mjs";
 
 const SSM_PATHS = {
   tiingo: "/edge-hunter/tiingo/api_key",
@@ -35,26 +35,8 @@ export const PARAMS = {
   minTouches: 2, // a level needs at least this many pivots to be valid
 };
 
-// ---------------------------------------------------------------------------
-// Secrets (SSM) — never log or return these values.
-// ---------------------------------------------------------------------------
-const _secretCache = new Map();
-let _ssm;
-function ssmClient() {
-  if (!_ssm) _ssm = new SSMClient({});
-  return _ssm;
-}
-
-async function getSecret(path) {
-  if (_secretCache.has(path)) return _secretCache.get(path);
-  const out = await ssmClient().send(
-    new GetParameterCommand({ Name: path, WithDecryption: true })
-  );
-  const value = out?.Parameter?.Value;
-  if (!value) throw new Error(`SSM parameter has no value: ${path}`);
-  _secretCache.set(path, value);
-  return value;
-}
+// Secrets are read via the shared ssm.mjs helper (getParameter) — decrypted in
+// memory only, cached per warm container, never logged.
 
 // ---------------------------------------------------------------------------
 // US market trading-day calendar (weekend + holiday aware) for the freshness gate.
@@ -302,7 +284,7 @@ async function fetchTiingoBars(ticker, token, startDate) {
 // Reads the Tiingo key from SSM (cached); the same adjusted series is used here
 // and in getMarketData so entry/stop/target comparisons stay consistent.
 export async function getDailyBars(ticker, { startDate, now = new Date() } = {}) {
-  const token = await getSecret(SSM_PATHS.tiingo);
+  const token = await getParameter(SSM_PATHS.tiingo);
   const start = startDate ?? isoDaysAgo(560, now);
   return fetchTiingoBars(ticker, token, start);
 }
@@ -384,7 +366,7 @@ export async function getMarketData(ticker, opts = {}) {
     bars, atr, last.close, avgVolume30, PARAMS
   );
 
-  const finnhubKey = await getSecret(SSM_PATHS.finnhub);
+  const finnhubKey = await getParameter(SSM_PATHS.finnhub);
   const [daysToEarnings, sector] = await Promise.all([
     fetchDaysToEarnings(ticker, finnhubKey, now),
     fetchSector(ticker, finnhubKey),
