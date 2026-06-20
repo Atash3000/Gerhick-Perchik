@@ -185,3 +185,35 @@ test("closeOutcome on an already-closed row returns closed:false (no throw)", as
   assert.equal(r.closed, false);
   assert.match(r.reason, /not open/);
 });
+
+test("setWatchlistEnabled updates the row, guarded by existence", async () => {
+  const client = { calls: [], async send(cmd) { this.calls.push(cmd.input); return {}; } };
+  const store = createStore({ client, watchlistTable: "T-wl" });
+
+  const r = await store.setWatchlistEnabled("AAPL", false);
+  assert.deepEqual(r, { ok: true, ticker: "AAPL", enabled: false });
+  const inp = client.calls[0];
+  assert.equal(inp.TableName, "T-wl");
+  assert.deepEqual(inp.Key, { pk: "TICKER#AAPL" });
+  assert.equal(inp.ExpressionAttributeValues[":e"], false);
+  assert.equal(inp.ConditionExpression, "attribute_exists(pk)");
+});
+
+test("setWatchlistEnabled on an unknown ticker returns ok:false (no throw)", async () => {
+  const err = new Error("missing");
+  err.name = "ConditionalCheckFailedException";
+  const store = createStore({ client: { async send() { throw err; } }, watchlistTable: "T-wl" });
+  const r = await store.setWatchlistEnabled("ZZZZ", true);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /not on watchlist/);
+});
+
+test("listOutcomesByStatus scans by status", async () => {
+  const items = [{ pk: "SIGNAL#MSFT#2026-06-18", status: "CLOSED" }];
+  const client = { calls: [], async send(cmd) { this.calls.push(cmd.input); return { Items: items }; } };
+  const store = createStore({ client, outcomesTable: "T-out" });
+
+  const res = await store.listOutcomesByStatus("CLOSED");
+  assert.deepEqual(res, items);
+  assert.equal(client.calls[0].ExpressionAttributeValues[":st"], "CLOSED");
+});

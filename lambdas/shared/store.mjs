@@ -34,10 +34,11 @@ export function epochMs(dateStr) {
 
 // Build a store bound to a DynamoDB document client + table names. Pass a fake
 // client in tests; in the Lambda, defaults read the env + a real client.
-export function createStore({ client, snapshotsTable, outcomesTable } = {}) {
+export function createStore({ client, snapshotsTable, outcomesTable, watchlistTable } = {}) {
   const doc = client ?? DynamoDBDocumentClient.from(new DynamoDBClient({}));
   const snapTable = snapshotsTable ?? process.env.SNAPSHOTS_TABLE;
   const outTable = outcomesTable ?? process.env.OUTCOMES_TABLE;
+  const watchTable = watchlistTable ?? process.env.WATCHLIST_TABLE;
 
   return {
     // One daily snapshot per scored name. `asOf` (YYYY-MM-DD) is the trading day
@@ -157,6 +158,49 @@ export function createStore({ client, snapshotsTable, outcomesTable } = {}) {
         }
         throw err;
       }
+    },
+
+    // Flip `enabled` on a gp-watchlist row (control: /enable, /disable). Guarded
+    // so we don't create a row for a ticker that isn't on the watchlist.
+    async setWatchlistEnabled(ticker, enabled) {
+      try {
+        await doc.send(
+          new UpdateCommand({
+            TableName: watchTable,
+            Key: { pk: `TICKER#${ticker}` },
+            UpdateExpression: "SET #en = :e",
+            ExpressionAttributeNames: { "#en": "enabled" },
+            ExpressionAttributeValues: { ":e": enabled },
+            ConditionExpression: "attribute_exists(pk)",
+          })
+        );
+        return { ok: true, ticker, enabled };
+      } catch (err) {
+        if (err?.name === "ConditionalCheckFailedException") {
+          return { ok: false, reason: "not on watchlist", ticker };
+        }
+        throw err;
+      }
+    },
+
+    // All outcome rows with a given status (paginated scan). Used by /stats.
+    async listOutcomesByStatus(status) {
+      const items = [];
+      let ExclusiveStartKey;
+      do {
+        const out = await doc.send(
+          new ScanCommand({
+            TableName: outTable,
+            FilterExpression: "#s = :st",
+            ExpressionAttributeNames: { "#s": "status" },
+            ExpressionAttributeValues: { ":st": status },
+            ExclusiveStartKey,
+          })
+        );
+        items.push(...(out.Items ?? []));
+        ExclusiveStartKey = out.LastEvaluatedKey;
+      } while (ExclusiveStartKey);
+      return items;
     },
   };
 }

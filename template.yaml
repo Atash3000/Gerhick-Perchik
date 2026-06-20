@@ -53,6 +53,10 @@ Parameters:
     Type: String
     Default: /gerchik/telegram/chat_id
     Description: SSM path to the DEDICATED Gerchik-Perchik Telegram chat id.
+  TelegramWebhookSecretPath:
+    Type: String
+    Default: /gerchik/telegram/webhook_secret
+    Description: SSM path to the Telegram webhook secret token (protects the control URL).
 
   # Daily scan time, in UTC. The US cash close is 16:00 ET and Tiingo EOD data
   # settles ~18:00 ET, so we scan well after that. NOTE: this is a fixed UTC
@@ -305,23 +309,70 @@ Resources:
             Enabled: !If [ScheduleIsEnabled, true, false]
 
   # ===========================================================================
+  # Control Lambda (Phase 7). Telegram webhook for /start /stop /mode /enable
+  # /disable /stats, and the subscriber for the ops SNS topic (so alarms page you
+  # via Telegram). Exposed via a public Function URL, protected by the Telegram
+  # secret-token header; commands are only honored from the dedicated chat id.
+  # ===========================================================================
+  ControlFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: esm
+        Target: es2022
+        Sourcemap: false
+        EntryPoints:
+          - handler.mjs
+        External:
+          - '@aws-sdk/*'
+    Properties:
+      FunctionName: gp-control
+      CodeUri: lambdas/control/
+      Description: Telegram control webhook + ops-alert forwarder.
+      FunctionUrlConfig:
+        AuthType: NONE # Telegram calls this; protected by the secret-token header
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource:
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${TelegramBotTokenPath}'
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${TelegramChatIdPath}'
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${TelegramWebhookSecretPath}'
+            # /start /stop toggle the two pipeline schedule rules.
+            - Effect: Allow
+              Action:
+                - events:EnableRule
+                - events:DisableRule
+                - events:DescribeRule
+              Resource:
+                - !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/gp-scanner-schedule'
+                - !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/gp-labeler-schedule'
+        # /mode writes gp-config; /enable /disable write gp-watchlist; /stats reads gp-outcomes.
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConfigTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WatchlistTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref OutcomesTable
+      Events:
+        OpsAlerts:
+          Type: SNS
+          Properties:
+            Topic: !Ref OpsTopic
+
+  # ===========================================================================
   # Ops alarm (Phase 6). Both functions log the keyword `gp_scan_failed` on any
   # failure; a metric filter on each log group feeds a single custom metric, and
   # an alarm fires to the ops SNS topic on sustained failures. The SNS → control
   # Lambda → Telegram delivery is wired in Phase 7 (the control Lambda is the
   # subscriber); for now the topic + alarm exist and can be subscribed manually.
   # ===========================================================================
-  ScannerLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: /aws/lambda/gp-scanner
-      RetentionInDays: 90
-
-  LabelerLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: /aws/lambda/gp-labeler
-      RetentionInDays: 90
+  # NOTE: Lambda auto-creates /aws/lambda/<fn> at function-create time, so we do
+  # NOT declare those log groups here (CFN would collide with AlreadyExists). The
+  # metric filters below attach to them by name, ordered after the functions.
 
   OpsTopic:
     Type: AWS::SNS::Topic
@@ -333,8 +384,9 @@ Resources:
 
   ScannerFailureFilter:
     Type: AWS::Logs::MetricFilter
+    DependsOn: ScannerFunction # ensures the auto-created log group exists first
     Properties:
-      LogGroupName: !Ref ScannerLogGroup
+      LogGroupName: /aws/lambda/gp-scanner
       FilterPattern: gp_scan_failed
       MetricTransformations:
         - MetricNamespace: GerchikPerchik
@@ -344,8 +396,9 @@ Resources:
 
   LabelerFailureFilter:
     Type: AWS::Logs::MetricFilter
+    DependsOn: LabelerFunction
     Properties:
-      LogGroupName: !Ref LabelerLogGroup
+      LogGroupName: /aws/lambda/gp-labeler
       FilterPattern: gp_scan_failed
       MetricTransformations:
         - MetricNamespace: GerchikPerchik
@@ -392,5 +445,8 @@ Outputs:
     Description: gp-labeler Lambda ARN.
     Value: !GetAtt LabelerFunction.Arn
   OpsTopicArn:
-    Description: SNS topic for ops alerts (Phase 7 control Lambda subscribes here).
+    Description: SNS topic for ops alerts (the control Lambda subscribes here).
     Value: !Ref OpsTopic
+  ControlFunctionUrl:
+    Description: Public URL to register as the Telegram webhook (with the secret token).
+    Value: !GetAtt ControlFunctionUrl.FunctionUrl
