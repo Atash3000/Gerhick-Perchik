@@ -9,6 +9,8 @@
   "feeBps": 10,
   "slippageBps": 5,
   "timeoutTradingDays": 60,
+  "accountSize": 10000,
+  "riskPctPerTrade": 1.0,
   "strategyVersion": "gp-1.0.0",
   "note": "PROVISIONAL tunables — thresholds/empiricalEdge are guesses until backed by gp-outcomes (Phase 8). alertMode MUST start as 'observe'; only a human flips it to 'live'."
 }

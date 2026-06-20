@@ -24,7 +24,7 @@ import { getActiveConfig } from "../shared/config.mjs";
 import { getMarketData } from "../shared/marketdata.mjs";
 import { score, DECISION } from "../shared/scoring.mjs";
 import { createStore } from "../shared/store.mjs";
-import { buildPayload, narrate, composeMessage, FALLBACK_NARRATION } from "../shared/narration.mjs";
+import { buildPayload, narrate, composeRichMessage, FALLBACK_NARRATION } from "../shared/narration.mjs";
 import { sendTelegram } from "../shared/telegram.mjs";
 import { STRATEGY_VERSION } from "../shared/version.mjs";
 
@@ -156,7 +156,7 @@ export async function handler() {
             flavor = FALLBACK_NARRATION;
             console.error(`gp_scan_failed: narrate ${entry.ticker}: ${nerr.message}`);
           }
-          await sendTelegram(composeMessage(payload, flavor));
+          await sendTelegram(composeRichMessage(result, md, config, config.alertMode, flavor));
           alertsSent += 1;
         } catch (aerr) {
           alertErrors += 1;

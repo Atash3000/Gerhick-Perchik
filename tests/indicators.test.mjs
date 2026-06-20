@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   sma, atrWilder, rsiWilder, computeLevels,
-  isTradingDay, mostRecentTradingDay,
+  isTradingDay, mostRecentTradingDay, pctChange, range52w,
 } from "../lambdas/shared/marketdata.mjs";
 
 test("sma averages the last `period` values", () => {
@@ -66,6 +66,20 @@ test("trading-day calendar is weekend- and holiday-aware", () => {
   assert.equal(isTradingDay("2026-06-19"), false); // Juneteenth (holiday)
   assert.equal(isTradingDay("2026-06-20"), false); // Saturday
   assert.equal(isTradingDay("2026-01-01"), false); // New Year's Day
+});
+
+test("pctChange computes latest vs prior close", () => {
+  assert.equal(pctChange([{ close: 100 }, { close: 102 }]), 2);
+  assert.equal(pctChange([{ close: 100 }]), null);
+});
+
+test("range52w returns min low / max high over the window", () => {
+  const bars = [
+    { high: 10, low: 5 },
+    { high: 12, low: 4 },
+    { high: 11, low: 6 },
+  ];
+  assert.deepEqual(range52w(bars), { low52: 4, high52: 12 });
 });
 
 test("mostRecentTradingDay skips the Juneteenth holiday", () => {

@@ -111,7 +111,7 @@ point of this project and must survive a table replacement or stack delete.
 - `gp-config` — `pk = "CONFIG"` (S), `sk = "ACTIVE"` (S). One live row holding
   tunables: `buyScoreThreshold`, `atrStopMultiple`, `minRiskReward`,
   `maxCorrelatedPositions`, `alertMode`, `feeBps`, `slippageBps`,
-  `timeoutTradingDays`. Read at the
+  `timeoutTradingDays`, `accountSize`, `riskPctPerTrade`. Read at the
   start of every run; never hardcode these in the Lambdas.
 - `gp-watchlist` — `pk = TICKER#<ticker>` (S). Fields: `sector`, `enabled`,
   `qualityTier`. The scanner only scans `enabled: true` rows. `sector` feeds the

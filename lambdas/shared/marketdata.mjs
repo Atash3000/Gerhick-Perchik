@@ -310,18 +310,44 @@ async function fetchDaysToEarnings(ticker, token, now = new Date()) {
   return Math.round((next - today) / MS);
 }
 
-// Finnhub company profile → sector (finnhubIndustry). Informational; the
-// correlation gate uses gp-watchlist.sector as source of truth.
-async function fetchSector(ticker, token) {
+// Finnhub company profile → { sector, name, marketCapMillions }. One call covers
+// all three (used for the correlation-gate sector and the alert's name/market cap).
+async function fetchProfile(ticker, token) {
   const url =
     `https://finnhub.io/api/v1/stock/profile2` +
     `?symbol=${encodeURIComponent(ticker)}&token=${token}`;
   try {
-    const data = await fetchJson(url, "Finnhub profile");
-    return data?.finnhubIndustry ?? null;
+    const d = await fetchJson(url, "Finnhub profile");
+    return {
+      sector: d?.finnhubIndustry ?? null,
+      name: d?.name ?? null,
+      marketCapMillions: typeof d?.marketCapitalization === "number" ? d.marketCapitalization : null,
+    };
   } catch {
-    return null;
+    return { sector: null, name: null, marketCapMillions: null };
   }
+}
+
+// Latest-bar % change vs the prior close (pure).
+export function pctChange(bars) {
+  if (bars.length < 2) return null;
+  const last = bars[bars.length - 1].close;
+  const prev = bars[bars.length - 2].close;
+  if (!(prev > 0)) return null;
+  return round((last / prev - 1) * 100, 2);
+}
+
+// 52-week high/low from the last ~252 trading bars (pure).
+export function range52w(bars) {
+  const w = bars.slice(-252);
+  if (w.length === 0) return { low52: null, high52: null };
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const b of w) {
+    if (b.low < lo) lo = b.low;
+    if (b.high > hi) hi = b.high;
+  }
+  return { low52: round(lo, 2), high52: round(hi, 2) };
 }
 
 // ---------------------------------------------------------------------------
@@ -366,15 +392,23 @@ export async function getMarketData(ticker, opts = {}) {
     bars, atr, last.close, avgVolume30, PARAMS
   );
 
+  const { low52, high52 } = range52w(bars);
+  const changePct = pctChange(bars);
+
   const finnhubKey = await getParameter(SSM_PATHS.finnhub);
-  const [daysToEarnings, sector] = await Promise.all([
+  const [daysToEarnings, profile] = await Promise.all([
     fetchDaysToEarnings(ticker, finnhubKey, now),
-    fetchSector(ticker, finnhubKey),
+    fetchProfile(ticker, finnhubKey),
   ]);
 
   return {
     ticker,
+    name: profile.name,
+    marketCapMillions: profile.marketCapMillions,
     close: round(last.close, 2),
+    pctChange: changePct,
+    low52,
+    high52,
     ma50: round(ma50, 2),
     ma200: round(ma200, 2),
     atr: round(atr, 2),
@@ -384,7 +418,7 @@ export async function getMarketData(ticker, opts = {}) {
     nearestSupport,
     nearestResistance,
     daysToEarnings,
-    sector,
+    sector: profile.sector,
     dataAsOf,
     fresh: true,
   };
