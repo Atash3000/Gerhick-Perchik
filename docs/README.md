@@ -69,7 +69,7 @@ gerchik-perchik/
 | 5 | labeler: first-touch, pessimistic fills, after-cost P&L | ✅ done |
 | 6 | `telegram.mjs` + narration; OBSERVE alerts + ops alarm | ✅ done |
 | 7 | control: `/start /stop /mode /enable /disable /stats` | ✅ done |
-| 8 | accumulate outcomes; tune `gp-config` from real data | ⬜ |
+| 8 | accumulate outcomes; tune `gp-config` from real data | 🔧 tooling ready (`/analyze`); tuning gated on data |
 | 9 | **human** flips `/mode live` after reviewing stats | ⬜ |
 
 > Observe mode is the default and going live is a human act. Thresholds and the

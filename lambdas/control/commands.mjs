@@ -9,6 +9,7 @@ export const HELP = [
   "/enable <TICKER> — add a ticker to the active scan",
   "/disable <TICKER> — remove it",
   "/stats [30d] — outcome summary for the current strategy version",
+  "/analyze [30d] — Phase 8 deep-dive: profit factor + component predictors",
 ].join("\n");
 
 // "/mode live" → {cmd:'mode', arg:'live'}; "/start@gp_bot" → {cmd:'start'};

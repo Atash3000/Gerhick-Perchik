@@ -18,6 +18,7 @@ you.
 | `/enable <TICKER>` | Set `enabled: true` on the `gp-watchlist` row (must already exist) |
 | `/disable <TICKER>` | Set `enabled: false` |
 | `/stats [30d]` | Summarize CLOSED `gp-outcomes` for the **current** `strategyVersion` — win-rate, avg %, avg R, and a per-score-bucket breakdown. Optional `Nd` window. |
+| `/analyze [30d]` | **Phase 8 deep-dive**: profit factor, expectancy, avg win/loss, by-score-bucket, and **component-predictor edge** — for each scoring component, the win-rate difference between its high and low halves. This is the input to v2 re-weighting: components with a large positive edge deserve weight; near-zero ones don't. Computes only — a human reviews and decides any weight change (a `STRATEGY_VERSION` bump). |
 
 `/start` and `/stop` are the **runtime** on/off switch (EventBridge), separate from
 the deploy-time `ScheduleEnabled` baseline. A redeploy resets the rules to the

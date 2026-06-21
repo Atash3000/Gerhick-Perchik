@@ -21,6 +21,7 @@ import { setAlertMode } from "../shared/config.mjs";
 import { createStore } from "../shared/store.mjs";
 import { STRATEGY_VERSION } from "../shared/version.mjs";
 import { parseCommand, computeStats, formatStats, formatAlarm, HELP } from "./commands.mjs";
+import { analyze, formatAnalysis } from "./analytics.mjs";
 
 const WEBHOOK_SECRET_PATH = "/gerchik-perchik/telegram/webhook_secret";
 const CHAT_ID_PATH = "/gerchik-perchik/telegram/chat_id";
@@ -115,6 +116,23 @@ async function dispatch(text) {
       }
       const stats = computeStats(outcomes, { strategyVersion: STRATEGY_VERSION, sinceEpochMs });
       return formatStats(stats, label);
+    }
+    case "analyze": {
+      // Phase 8 deep-dive: profit factor, expectancy, and which scoring
+      // components actually predict winners (the input to v2 re-weighting).
+      const store = createStore();
+      const outcomes = await store.listOutcomesByStatus("CLOSED");
+      let sinceEpochMs;
+      let label;
+      const m = parsed.arg && /^(\d+)d$/.exec(parsed.arg);
+      if (m) {
+        sinceEpochMs = Date.now() - Number(m[1]) * 86_400_000;
+        label = `${m[1]}d`;
+      }
+      return formatAnalysis(
+        analyze(outcomes, { strategyVersion: STRATEGY_VERSION, sinceEpochMs }),
+        label
+      );
     }
     default:
       return HELP;
