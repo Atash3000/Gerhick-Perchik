@@ -277,7 +277,20 @@ async function fetchJson(url, label) {
   if (!res.ok) {
     throw new Error(`${label} request failed: ${res.status} ${res.statusText}`);
   }
-  return res.json();
+  // Some providers (e.g. Tiingo) return HTTP 200 with a PLAIN-TEXT body on rate
+  // limit / quota errors ("You have run out of your ... API limit"). Parsing that
+  // as JSON yields an opaque "Unexpected token" error, so read text first and
+  // surface a clear, classified message.
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    const snippet = text.slice(0, 80).replace(/\s+/g, " ").trim();
+    if (/limit|exceed|rate|quota/i.test(text)) {
+      throw new Error(`${label} rate-limited / quota: ${snippet}`);
+    }
+    throw new Error(`${label} non-JSON response: ${snippet}`);
+  }
 }
 
 function isoDaysAgo(days, now = new Date()) {
