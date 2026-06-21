@@ -40,3 +40,16 @@ jobs:
         run: |
           export PATH="$PWD/node_modules/.bin:$PATH"
           sam build
+
+      # Guard: the BUILT artifact must load as ESM and export `handler` — exactly
+      # how the Lambda runtime loads it. Catches the "Cannot use import statement
+      # outside a module" class of packaging bug that sam build alone does not.
+      - name: Built artifacts load as ESM
+        run: |
+          for f in Scanner Labeler Control; do
+            node --input-type=module -e "
+              const m = await import('./.aws-sam/build/${f}Function/handler.mjs');
+              if (typeof m.handler !== 'function') { console.error('${f}: no handler export'); process.exit(1); }
+              console.log('${f}: handler export OK');
+            "
+          done
