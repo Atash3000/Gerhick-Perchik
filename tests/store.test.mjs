@@ -81,6 +81,30 @@ test("writeSnapshot records raw metrics from marketData for tuning", async () =>
   assert.equal(Item.metrics.daysToEarnings, 20);
 });
 
+test("writeSnapshot derives v2 capture booleans (Minervini/Turtle) when inputs present", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });
+  const md = {
+    close: 113, ma50: 110, ma150: 105, ma200: 100, ma200SlopePct: 1.2,
+    high20d: 112, high55d: 114, // close>high20d (breakout20 true), close<high55d (false)
+  };
+  await store.writeSnapshot(buyResult, { asOf: "2026-06-18", marketData: md });
+  const { metrics } = client.calls[0].Item;
+  assert.equal(metrics.minerviniAligned, true); // 110>105>100
+  assert.equal(metrics.ma200Rising, true); // slope 1.2 > 0
+  assert.equal(metrics.breakout20, true); // 113 > 112
+  assert.equal(metrics.breakout55, false); // 113 < 114
+});
+
+test("writeSnapshot v2 booleans are null when MAs/levels are unavailable", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });
+  await store.writeSnapshot(buyResult, { asOf: "2026-06-18", marketData: { close: 100 } });
+  const { metrics } = client.calls[0].Item;
+  assert.equal(metrics.minerviniAligned, null);
+  assert.equal(metrics.breakout55, null);
+});
+
 test("writeSnapshot falls back to asOf when the result has no dataAsOf (NO_DATA)", async () => {
   const client = fakeClient();
   const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });

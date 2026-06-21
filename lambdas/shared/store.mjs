@@ -40,17 +40,38 @@ export function snapshotMetrics(md) {
     typeof m.volume === "number" && m.avgVolume30 > 0
       ? Math.round((m.volume / m.avgVolume30) * 100) / 100
       : null;
+  // Derived v2 signals (captured for Phase 8 analysis; NOT yet scored). Booleans
+  // are null when an input MA/level is unavailable (insufficient history).
+  const minerviniAligned =
+    typeof m.ma50 === "number" && typeof m.ma150 === "number" && typeof m.ma200 === "number"
+      ? m.ma50 > m.ma150 && m.ma150 > m.ma200
+      : null;
+  const ma200Rising = typeof m.ma200SlopePct === "number" ? m.ma200SlopePct > 0 : null;
+  const breakout20 =
+    typeof m.high20d === "number" && typeof m.close === "number" ? m.close > m.high20d : null;
+  const breakout55 =
+    typeof m.high55d === "number" && typeof m.close === "number" ? m.close > m.high55d : null;
+
   return {
     rsi: m.rsi ?? null,
     ma50: m.ma50 ?? null,
+    ma150: m.ma150 ?? null,
     ma200: m.ma200 ?? null,
+    ma200SlopePct: m.ma200SlopePct ?? null,
     atr: m.atr ?? null,
     volume: m.volume ?? null,
     avgVolume30: m.avgVolume30 ?? null,
     volumeRatio,
+    high20d: m.high20d ?? null,
+    high55d: m.high55d ?? null,
     nearestSupport: m.nearestSupport?.price ?? null,
     nearestResistance: m.nearestResistance?.price ?? null,
     daysToEarnings: m.daysToEarnings ?? null,
+    // Derived booleans for tuning analysis:
+    minerviniAligned, // 50>150>200
+    ma200Rising,
+    breakout20, // close > prior 20-day high
+    breakout55, // close > prior 55-day high
   };
 }
 
