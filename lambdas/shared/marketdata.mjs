@@ -26,7 +26,11 @@ const SSM_PATHS = {
 // Detection / indicator parameters (v1).
 export const PARAMS = {
   maShort: 50,
+  maMid: 150, // Minervini trend template
   maLong: 200,
+  maSlopeLag: 30, // bars back to measure 200MA slope ("rising")
+  breakoutShort: 20, // Turtle short breakout channel
+  breakoutLong: 55, // Turtle long breakout channel
   atrPeriod: 14,
   rsiPeriod: 14,
   avgVolumeWindow: 30,
@@ -99,6 +103,31 @@ export function sma(values, period) {
   let sum = 0;
   for (let i = values.length - period; i < values.length; i++) sum += values[i];
   return sum / period;
+}
+
+// SMA `period` ending `lag` bars before the latest bar (for slope/trend-template).
+export function smaLagged(values, period, lag) {
+  if (values.length < period + lag) return null;
+  return sma(values.slice(0, values.length - lag), period);
+}
+
+// % change of the `period`-SMA now vs `lag` bars ago — Minervini "200MA rising".
+// Positive = the MA is sloping up.
+export function maSlopePct(values, period, lag) {
+  const now = sma(values, period);
+  const then = smaLagged(values, period, lag);
+  if (now == null || then == null || !(then > 0)) return null;
+  return Math.round((now / then - 1) * 1e4) / 1e2;
+}
+
+// Highest high over the `n` bars BEFORE the latest bar (Turtle breakout: a close
+// above this is a fresh N-day high). Returns null if not enough history.
+export function priorHighN(bars, n) {
+  if (bars.length < n + 1) return null;
+  const window = bars.slice(bars.length - 1 - n, bars.length - 1);
+  let hi = -Infinity;
+  for (const b of window) if (b.high > hi) hi = b.high;
+  return hi === -Infinity ? null : hi;
 }
 
 // Wilder/RMA ATR. bars: [{high, low, close}] ascending.
@@ -384,7 +413,11 @@ export async function getMarketData(ticker, opts = {}) {
   const last = bars[bars.length - 1];
 
   const ma50 = sma(closes, PARAMS.maShort);
+  const ma150 = sma(closes, PARAMS.maMid);
   const ma200 = sma(closes, PARAMS.maLong);
+  const ma200SlopePct = maSlopePct(closes, PARAMS.maLong, PARAMS.maSlopeLag);
+  const high20d = priorHighN(bars, PARAMS.breakoutShort);
+  const high55d = priorHighN(bars, PARAMS.breakoutLong);
   const atr = atrWilder(bars, PARAMS.atrPeriod);
   const rsi = rsiWilder(closes, PARAMS.rsiPeriod);
   const avgVolume30 = sma(volumes, PARAMS.avgVolumeWindow);
@@ -410,7 +443,12 @@ export async function getMarketData(ticker, opts = {}) {
     low52,
     high52,
     ma50: round(ma50, 2),
+    ma150: ma150 == null ? null : round(ma150, 2),
     ma200: round(ma200, 2),
+    // v2 (captured, not yet scored — for Phase 8 analysis):
+    ma200SlopePct, // >0 means the 200MA is rising (Minervini)
+    high20d: high20d == null ? null : round(high20d, 2), // Turtle 20-day breakout level
+    high55d: high55d == null ? null : round(high55d, 2), // Turtle 55-day breakout level
     atr: round(atr, 2),
     rsi: round(rsi, 2),
     volume: Math.round(last.volume),

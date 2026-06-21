@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   sma, atrWilder, rsiWilder, computeLevels,
   isTradingDay, mostRecentTradingDay, pctChange, range52w,
+  smaLagged, maSlopePct, priorHighN,
 } from "../lambdas/shared/marketdata.mjs";
 
 test("sma averages the last `period` values", () => {
@@ -71,6 +72,23 @@ test("trading-day calendar is weekend- and holiday-aware", () => {
 test("pctChange computes latest vs prior close", () => {
   assert.equal(pctChange([{ close: 100 }, { close: 102 }]), 2);
   assert.equal(pctChange([{ close: 100 }]), null);
+});
+
+test("maSlopePct is positive for a rising series, null without enough history", () => {
+  const rising = Array.from({ length: 240 }, (_, i) => 100 + i); // strictly up
+  assert.ok(maSlopePct(rising, 200, 30) > 0);
+  assert.equal(maSlopePct([1, 2, 3], 200, 30), null);
+  // smaLagged sanity: SMA of [1..5] lagged by 1 == SMA of [1..4]
+  assert.equal(smaLagged([1, 2, 3, 4, 5], 4, 1), 2.5);
+});
+
+test("priorHighN returns the highest high of the N bars before the last", () => {
+  const bars = [
+    { high: 10 }, { high: 12 }, { high: 11 }, // prior window
+    { high: 9 }, // latest bar — excluded
+  ];
+  assert.equal(priorHighN(bars, 3), 12);
+  assert.equal(priorHighN([{ high: 1 }], 3), null); // not enough history
 });
 
 test("range52w returns min low / max high over the window", () => {
