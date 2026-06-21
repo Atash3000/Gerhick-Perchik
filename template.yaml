@@ -223,6 +223,11 @@ Resources:
         Format: esm
         Target: es2022
         Sourcemap: false
+        # Emit handler.mjs (not .js) so the Lambda runtime loads the bundle as
+        # ESM. With .js, Node treats it as CommonJS and the import statements
+        # throw "Cannot use import statement outside a module" at init.
+        OutExtension:
+          - .js=.mjs
         EntryPoints:
           - handler.mjs
         External:
@@ -279,6 +284,11 @@ Resources:
         Format: esm
         Target: es2022
         Sourcemap: false
+        # Emit handler.mjs (not .js) so the Lambda runtime loads the bundle as
+        # ESM. With .js, Node treats it as CommonJS and the import statements
+        # throw "Cannot use import statement outside a module" at init.
+        OutExtension:
+          - .js=.mjs
         EntryPoints:
           - handler.mjs
         External:
@@ -322,6 +332,11 @@ Resources:
         Format: esm
         Target: es2022
         Sourcemap: false
+        # Emit handler.mjs (not .js) so the Lambda runtime loads the bundle as
+        # ESM. With .js, Node treats it as CommonJS and the import statements
+        # throw "Cannot use import statement outside a module" at init.
+        OutExtension:
+          - .js=.mjs
         EntryPoints:
           - handler.mjs
         External:
