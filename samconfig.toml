@@ -32,6 +32,13 @@ tags = "Project=gerchik-perchik"
 #   leaving the IAM role scoped to old paths → AccessDenied. Pinning matches code.
 parameter_overrides = [
   "ScheduleEnabled=true",
+  # Dedicated Gerchik-Perchik Tiingo key (issue #33). Pinning this re-scopes the
+  # scanner/labeler ssm:GetParameter IAM to this ARN (template Resource follows
+  # ${TiingoKeyPath}) and sets TIINGO_KEY_PATH env → KEY_PATHS → gp_keypaths log.
+  # REQUIRES the human to create /gerchik/tiingo/api_key (SecureString) FIRST —
+  # deploying before the param exists makes every Tiingo read fail. Finnhub +
+  # Anthropic stay shared (/edge-hunter/*).
+  "TiingoKeyPath=/gerchik/tiingo/api_key",
   "TelegramBotTokenPath=/gerchik-perchik/telegram/bot_token",
   "TelegramChatIdPath=/gerchik-perchik/telegram/chat_id",
   "TelegramWebhookSecretPath=/gerchik-perchik/telegram/webhook_secret",
