@@ -87,3 +87,80 @@ test("the entry bar itself is never counted (only days after entry)", () => {
   assert.equal(r.outcome, OUTCOME.TIMEOUT); // NOT stop from the entry-day low
   assert.equal(r.daysHeld, 5);
 });
+
+// --- Split-safe re-anchoring (B5) ---------------------------------------------
+
+test("no-split regression: entry bar present, scaleFactor 1, behavior unchanged", () => {
+  const bars = [
+    b("2026-06-18", 100, 100, 99, 100), // entry bar — adjClose == storedEntry
+    b("2026-06-19", 101, 103, 99, 100),
+    b("2026-06-22", 99, 100, 97, 98), // low touches stop → STOP
+  ];
+  const r = labelSignal(SIGNAL, bars, CONFIG);
+  assert.equal(r.outcome, OUTCOME.STOP);
+  assert.equal(r.scaleFactor, 1);
+  assert.equal(r.splitAdjusted, false);
+  assert.equal(r.entryBarMissing, false);
+  assert.equal(r.entryAdjAtLabel, 100);
+  assert.equal(r.exitPrice, 97);
+  assert.equal(r.profitPct, -3.3); // identical to the un-anchored STOP case
+});
+
+test("2:1 split after entry → STOP labeled correctly (not an instant false stop)", () => {
+  // Stored at scan time: entry 200 / stop 194 / target 220. A 2:1 split halves
+  // the whole adjusted series, so the entry bar now shows ~100.
+  const signal = { entry: 200, stop: 194, target: 220, entryDate: "2026-06-18" };
+  const bars = [
+    b("2026-06-18", 100, 101, 99, 100), // entry bar, adjusted (was ~200)
+    b("2026-06-19", 98, 100, 96, 99), // adjusted low 96 ≤ scaled stop 97 → STOP
+  ];
+  const r = labelSignal(signal, bars, CONFIG);
+  assert.equal(r.scaleFactor, 0.5); // 100 / 200
+  assert.equal(r.splitAdjusted, true);
+  assert.equal(r.entryAdjAtLabel, 100);
+  assert.equal(r.outcome, OUTCOME.STOP);
+  assert.equal(r.exitPrice, 97); // min(scaled stop 97, open 98)
+  // Same after-cost return as the equivalent unsplit -3% stop: NOT a false -50%.
+  assert.equal(r.profitPct, -3.3);
+});
+
+test("2:1 split after entry → TARGET labeled correctly", () => {
+  const signal = { entry: 200, stop: 194, target: 220, entryDate: "2026-06-18" };
+  const bars = [
+    b("2026-06-18", 100, 101, 99, 100), // entry bar
+    b("2026-06-19", 101, 112, 100, 111), // high 112 ≥ scaled target 110 → TARGET
+  ];
+  const r = labelSignal(signal, bars, CONFIG);
+  assert.equal(r.scaleFactor, 0.5);
+  assert.equal(r.splitAdjusted, true);
+  assert.equal(r.outcome, OUTCOME.TARGET);
+  assert.equal(r.exitPrice, 110); // scaled target, no gap-up credit
+  assert.equal(r.profitPct, 9.7); // +10% − 0.30% cost (split-invariant)
+});
+
+test("small dividend adjustment: scaled but splitAdjusted=false (under threshold)", () => {
+  // Entry bar adjusts to 99 vs stored 100 → scaleFactor 0.99 (a dividend, not a split).
+  const bars = [
+    b("2026-06-18", 99, 99, 98, 99), // entry bar slightly adjusted
+    b("2026-06-19", 100, 109, 99, 108), // high 109 ≥ scaled target 108.9 → TARGET
+  ];
+  const r = labelSignal(SIGNAL, bars, CONFIG);
+  assert.equal(r.scaleFactor, 0.99);
+  assert.equal(r.splitAdjusted, false); // |0.99 − 1| = 0.01 < 0.02
+  assert.equal(r.outcome, OUTCOME.TARGET);
+  assert.equal(r.exitPrice, 108.9); // 110 × 0.99
+  assert.equal(r.profitPct, 9.7); // (108.9/99 − 1)*100 − 0.30 = +9.7
+});
+
+test("entry bar missing: falls back to scaleFactor 1 and flags entryBarMissing", () => {
+  const bars = [
+    b("2026-06-19", 101, 103, 99, 100), // no entry-date bar present
+    b("2026-06-22", 99, 100, 97, 98),
+  ];
+  const r = labelSignal(SIGNAL, bars, CONFIG);
+  assert.equal(r.entryBarMissing, true);
+  assert.equal(r.scaleFactor, 1);
+  assert.equal(r.entryAdjAtLabel, null);
+  assert.equal(r.outcome, OUTCOME.STOP); // unchanged behavior on the fallback path
+  assert.equal(r.exitPrice, 97);
+});

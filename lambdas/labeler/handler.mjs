@@ -54,6 +54,11 @@ export async function handler() {
         exitPrice: label.exitPrice,
         profitPct: label.profitPct, // after cost
         daysHeld: label.daysHeld,
+        // Split re-anchor audit (see labeling.mjs):
+        scaleFactor: label.scaleFactor,
+        splitAdjusted: label.splitAdjusted,
+        entryAdjAtLabel: label.entryAdjAtLabel,
+        entryBarMissing: label.entryBarMissing,
       });
       if (res.closed) tally[label.outcome] += 1;
       else tally.stillOpen += 1; // lost a race; already closed elsewhere

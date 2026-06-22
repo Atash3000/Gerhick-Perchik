@@ -68,9 +68,23 @@ outcomes accumulate (Phase 8).
 the same `ScheduleEnabled` parameter — **off by default** until the pipeline is
 ready. It is idempotent: re-running only closes newly-resolved signals.
 
-## Known limitation
+## Split-safe re-anchoring
 
-Labeling uses split/dividend-**adjusted** prices, which rescale retroactively. If a
-split occurs mid-trade, the stored absolute `entry`/`stop`/`target` (captured at
-scan time) can drift from the re-fetched adjusted series. Rare for the large-cap
-watchlist and short windows; tracked as a follow-up.
+Labeling uses split/dividend-**adjusted** prices, which Tiingo rescales
+retroactively — so a split after a signal opens halves (or otherwise re-scales)
+the entry-era bars while the stored `entry`/`stop`/`target` stay in the scan-time
+frame. The labeler re-anchors before walking:
+
+1. Find the entry bar (`date === entryDate`) and read its current adjusted close
+   `entryAdjNow`.
+2. `scaleFactor = entryAdjNow / storedEntry` (1.0 with no split; ~0.5 after a 2:1).
+3. Scale `entry`/`stop`/`target` by `scaleFactor` into the current frame, then run
+   the normal first-touch walk. `profitPct` is anchored to the scaled entry, so it
+   is **split-invariant** (a ratio).
+
+Audit fields recorded on the outcome: `scaleFactor`, `splitAdjusted`
+(`|scaleFactor − 1| > 0.02`), `entryAdjAtLabel`, and `entryBarMissing` (true →
+fell back to `scaleFactor = 1`). With `scaleFactor == 1` the result is identical to
+the pre-fix behavior. (Anchoring to the adjusted series is total-return consistent;
+a small dividend adjustment scales the levels proportionally and is flagged
+`splitAdjusted: false`.)
