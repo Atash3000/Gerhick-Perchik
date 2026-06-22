@@ -36,6 +36,13 @@ const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 // `errorCount` = per-ticker fetch errors + per-ticker persist errors.
 // `freshDataCount` = names that returned fresh market data (drives coverage).
 export const COVERAGE_MIN_PCT = 50;
+// Open a new outcome only for a BUY_CANDIDATE whose ticker has no OPEN outcome.
+// Prevents a name that qualifies many days running from opening overlapping,
+// correlated near-duplicate trades. Pure.
+export function shouldOpenOutcome(decision, ticker, openTickers) {
+  return decision === DECISION.BUY_CANDIDATE && !openTickers.has(ticker);
+}
+
 export function assessScanHealth({ expectedCount, snapshotsWritten, errorCount, freshDataCount }) {
   if (!expectedCount) return { healthy: true, reason: null }; // nothing to scan
   if (snapshotsWritten === 0) {
@@ -137,17 +144,21 @@ export async function handler(event) {
   const watchlist = await loadEnabledWatchlist(process.env.WATCHLIST_TABLE);
   const store = createStore();
 
-  // Correlation gate input: count currently-OPEN outcomes per sector (measured at
-  // scan start; new opens within this same scan are not retro-counted).
+  // Open outcomes at scan start drive two things: the correlation gate (count by
+  // sector) and de-duplication (one OPEN outcome per ticker at a time — a name
+  // that qualifies many days running must NOT open a new overlapping trade each
+  // day, which would flood /analyze with correlated near-duplicates).
   const openBySector = {};
+  const openTickers = new Set();
   for (const o of await store.listOpenOutcomes()) {
-    const sec = o.sector ?? "unknown";
-    openBySector[sec] = (openBySector[sec] ?? 0) + 1;
+    openBySector[o.sector ?? "unknown"] = (openBySector[o.sector ?? "unknown"] ?? 0) + 1;
+    openTickers.add(o.ticker);
   }
 
   const tally = { BUY_CANDIDATE: 0, NO_SIGNAL: 0, NO_DATA: 0, ERROR: 0 };
   let snapshotsWritten = 0;
   let outcomesOpened = 0;
+  let reEntriesSkipped = 0; // BUY_CANDIDATEs with a position already open
   let writeErrors = 0;
   let alertsSent = 0;
   let alertErrors = 0;
@@ -191,27 +202,35 @@ export async function handler(event) {
     const result = score(md, config, marketContext);
     tally[result.decision] = (tally[result.decision] ?? 0) + 1;
 
-    // Persist: one daily snapshot per scored name; open an outcome row for each
-    // BUY_CANDIDATE (idempotent). A write failure for one name is logged and
-    // skipped — it must not sink the scan.
+    // A BUY_CANDIDATE only opens a NEW position (and alerts) when the ticker has no
+    // outcome already OPEN — otherwise it's a held position, not a fresh entry.
+    const newEntry = shouldOpenOutcome(result.decision, entry.ticker, openTickers);
+    if (result.decision === DECISION.BUY_CANDIDATE && !newEntry) reEntriesSkipped += 1;
+
+    // Persist: one daily snapshot per scored name (always); open an outcome only
+    // for a NEW entry. A write failure for one name is logged and skipped.
     try {
       await store.writeSnapshot(result, {
         asOf: regime.asOf, sector: entry.sector, marketData: md, fundamentals,
       });
       snapshotsWritten += 1;
-      if (result.decision === DECISION.BUY_CANDIDATE) {
+      if (newEntry) {
         const opened = await store.openOutcome(result, {
           sector: entry.sector,
           rs: { rsRaw: md.rsRaw, rsRank: md.rsRank, rsVsSpy: md.rsVsSpy },
         });
-        if (opened.opened) outcomesOpened += 1;
+        if (opened.opened) {
+          outcomesOpened += 1;
+          openTickers.add(entry.ticker); // guard against any same-scan re-open
+        }
       }
     } catch (werr) {
       writeErrors += 1;
       console.error(`gp_scan_failed: persist ${entry.ticker}: ${werr.message}`);
     }
 
-    if (result.decision === DECISION.BUY_CANDIDATE) {
+    // Alert only on a NEW entry — no daily re-alert for a position already held.
+    if (newEntry) {
       candidates.push({ ticker: entry.ticker, score: result.score, rr: result.riskReward });
 
       // OBSERVE-mode Telegram alert. Numbers are built deterministically from the
@@ -269,6 +288,7 @@ export async function handler(event) {
     coverage,
     tally,
     outcomesOpened,
+    reEntriesSkipped,
     alertsSent,
     alertErrors,
     candidates,

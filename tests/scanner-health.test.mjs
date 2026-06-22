@@ -1,6 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { assessScanHealth } from "../lambdas/scanner/handler.mjs";
+import { assessScanHealth, shouldOpenOutcome } from "../lambdas/scanner/handler.mjs";
+
+test("shouldOpenOutcome: open a BUY_CANDIDATE only if no position already open", () => {
+  const open = new Set(["MSFT"]);
+  assert.equal(shouldOpenOutcome("BUY_CANDIDATE", "AAPL", open), true);  // new name
+  assert.equal(shouldOpenOutcome("BUY_CANDIDATE", "MSFT", open), false); // already open → skip
+  assert.equal(shouldOpenOutcome("NO_SIGNAL", "AAPL", open), false);     // not a candidate
+  assert.equal(shouldOpenOutcome("NO_DATA", "AAPL", open), false);
+});
 
 test("healthy scan: snapshots written, low errors, full coverage", () => {
   const h = assessScanHealth({ expectedCount: 43, snapshotsWritten: 41, errorCount: 2, freshDataCount: 41 });
