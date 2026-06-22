@@ -17,7 +17,7 @@
 //     historical levels or indicator math.
 
 import { getParameter } from "./ssm.mjs";
-import { finnhub } from "./ratelimit.mjs";
+import { finnhub, tiingo, withRetry, isRateLimited } from "./ratelimit.mjs";
 
 // SSM PATHS (never the values). Driven by env so the Tiingo key can be moved to a
 // DEDICATED Gerchik-Perchik key without a code change — see docs (Tiingo free tier
@@ -310,7 +310,8 @@ async function fetchTiingoBars(ticker, token, startDate) {
   const url =
     `https://api.tiingo.com/tiingo/daily/${encodeURIComponent(ticker)}/prices` +
     `?startDate=${startDate}&format=json&resampleFreq=daily&token=${token}`;
-  const rows = await fetchJson(url, "Tiingo");
+  // Throttle (avoid burst 429s) + bounded retry on a transient/rate-limit 429.
+  const rows = await tiingo(() => withRetry(() => fetchJson(url, "Tiingo"), { shouldRetry: isRateLimited }));
   if (!Array.isArray(rows) || rows.length === 0) {
     throw new Error(`Tiingo returned no bars for ${ticker}`);
   }

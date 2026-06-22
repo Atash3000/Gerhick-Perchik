@@ -130,23 +130,29 @@ the `TiingoKeyPath` / `FinnhubKeyPath` template params), so a key can be moved
 without a code change. The scanner and labeler log the paths in use at startup
 (`gp_keypaths {...}`) — **paths only, never the secret values**.
 
-**Tiingo free-tier limit (important):** Tiingo free caps **unique symbols at
-500/month** (plus ~50 req/hour, ~1000/day). The Tiingo key currently defaults to
-the **shared** `/edge-hunter/tiingo/api_key`, so Edge Hunter's broad SEC/insider
-symbol coverage and our 43 names draw from the **same** monthly quota. When the
-combined unique-symbol count exceeds 500, Tiingo returns
-`You have run over your 500 symbol look up for this month` and our scans get
-`NO_DATA` for most names — which B7 coverage flags as degraded → pages.
+**Tiingo free-tier limits (two caps, both confirmed live):**
+1. **Monthly:** ~**500 unique symbols/month**. (This is why the *shared*
+   `/edge-hunter` key starved us — Edge Hunter's broad coverage blew the combined
+   monthly total; fixed by the dedicated key below.)
+2. **Hourly:** ~**50 requests/hour** — the binding ceiling for scan size. Exceeding
+   it returns HTTP **429** `You have run over your hourly request allocation`
+   (no `Retry-After` header). **This caps a single scan at ~45 names**, because a
+   scan is one burst within an hour. Throttling cannot raise it (pacing 199 calls
+   under 50/hr would take ~4h, past the 900s timeout), so **~200 names is NOT
+   viable on free Tiingo** — that needs a paid tier. The real free ceiling is ~45,
+   not the ~200 the timeout would otherwise allow.
 
-**Planned fix (tracked as a GitHub issue):** a DEDICATED Gerchik-Perchik Tiingo
-key. Cutover (no code change needed — path is env-driven):
-1. Obtain a separate Tiingo key; `aws ssm put-parameter --name
-   /gerchik/tiingo/api_key --type SecureString --value <key>`.
-2. Pin `TiingoKeyPath=/gerchik/tiingo/api_key` in `samconfig.toml`
-   `parameter_overrides` (this also re-scopes the scanner/labeler IAM to that ARN).
-3. Deploy. Verify via the `gp_keypaths` startup log and B7 coverage.
+**Resilience (scanner-429 fix):** Tiingo calls are routed through a limiter
+(`ratelimit.mjs` `tiingo`) to avoid burst 429s, and through a **bounded retry**
+(`withRetry`, 2 attempts) so a transient 429 self-heals. A 429 can no longer crash
+a run: the SPY **regime fetch catches it and aborts the scan cleanly** (degraded
+summary, not an uncaught Lambda error), and per-ticker 429s already degrade to
+`NO_DATA`/`ERROR`. B7 coverage still flags a degraded run → pages.
 
-Finnhub and Anthropic keys stay shared (`/edge-hunter/*`) per scope.
+**Dedicated key (done — #33/#38):** Tiingo reads `/gerchik/tiingo/api_key`
+(env-driven `TiingoKeyPath`, IAM re-scoped, confirmed via the `gp_keypaths` log).
+This fixed the *monthly* starvation; the *hourly* cap above is separate and bounds
+scan size. Finnhub and Anthropic keys stay shared (`/edge-hunter/*`) per scope.
 
 > The opportunity/quality **backtest scripts refuse to run** when fewer than 90% of
 > watchlist symbols load (the quota case) — better no answer than a misleading one.

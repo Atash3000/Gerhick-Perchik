@@ -92,7 +92,16 @@ async function loadEnabledWatchlist(tableName) {
 // { spyBelow200ma, asOf, spyReturn126d } or null when SPY data is stale/short
 // (→ abort run). spyReturn126d feeds the (capture-only) rsVsSpy alpha.
 async function getMarketRegime() {
-  const spy = await getMarketData(REGIME_TICKER);
+  // A rate-limit (429) or any fetch error on SPY must NOT crash the scan — catch
+  // it and return null so the caller aborts cleanly (the worst bug: an uncaught
+  // 429 here killed the whole run). Tiingo retries are bounded inside getDailyBars.
+  let spy;
+  try {
+    spy = await getMarketData(REGIME_TICKER);
+  } catch (err) {
+    console.error(`gp_scan_failed: SPY regime fetch failed — ${err.message}`);
+    return null;
+  }
   if (!spy || spy.fresh === false || typeof spy.ma200 !== "number") {
     return null;
   }
