@@ -108,8 +108,22 @@ export function formatStats(stats, label) {
   return lines.join("\n");
 }
 
+// Format an ISO timestamp in New York local time (handles EST/EDT). Returns null
+// on a missing/unparseable value.
+export function formatEt(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: true, timeZoneName: "short",
+  }).format(d);
+}
+
 // Turn a CloudWatch-alarm SNS message into a Telegram line. Pure; tolerates
-// non-JSON payloads.
+// non-JSON payloads. Adds a New-York-local timestamp (CloudWatch's own text is
+// UTC, which is confusing for an NYC user).
 export function formatAlarm(snsMessage) {
   let parsed;
   try {
@@ -120,5 +134,9 @@ export function formatAlarm(snsMessage) {
   const name = parsed.AlarmName ?? "alarm";
   const state = parsed.NewStateValue ?? "?";
   const reason = parsed.NewStateReason ?? "";
-  return `⚠️ Ops alert: ${name} → ${state}\n${reason}`.trim();
+  const et = formatEt(parsed.StateChangeTime);
+  const lines = [`⚠️ Ops alert: ${name} → ${state}`];
+  if (et) lines.push(`🕐 ${et}`);
+  if (reason) lines.push(`${reason}  (times above are UTC)`);
+  return lines.join("\n").trim();
 }

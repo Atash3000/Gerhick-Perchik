@@ -5,6 +5,7 @@ import {
   computeStats,
   formatStats,
   formatAlarm,
+  formatEt,
 } from "../lambdas/control/commands.mjs";
 
 test("parseCommand handles commands, args, bot mentions, and casing", () => {
@@ -67,4 +68,23 @@ test("formatAlarm parses a CloudWatch SNS message, tolerates non-JSON", () => {
   assert.match(out, /gp-scan-failures/);
   assert.match(out, /ALARM/);
   assert.match(formatAlarm("plain text"), /plain text/);
+});
+
+test("formatAlarm adds a New-York-local timestamp from StateChangeTime", () => {
+  const msg = JSON.stringify({
+    AlarmName: "gp-scan-failures",
+    NewStateValue: "ALARM",
+    NewStateReason: "datapoint [41.0 (22/06/26 14:36:00)] >= threshold (3.0)",
+    StateChangeTime: "2026-06-22T14:36:00.000Z", // 14:36 UTC = 10:36 AM EDT
+  });
+  const out = formatAlarm(msg);
+  assert.match(out, /🕐/);
+  assert.match(out, /10:36\s?AM EDT/); // converted to NYC time
+  assert.match(out, /times above are UTC/);
+});
+
+test("formatEt converts UTC ISO to NY local (EDT in summer)", () => {
+  assert.match(formatEt("2026-06-22T14:36:00Z"), /10:36\s?AM EDT/);
+  assert.equal(formatEt(null), null);
+  assert.equal(formatEt("not-a-date"), null);
 });
