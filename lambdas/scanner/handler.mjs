@@ -30,6 +30,22 @@ const REGIME_TICKER = "SPY"; // broad-market proxy for the regime gate
 
 const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
+// Health check for a completed scan (pure). A run can return ok:true yet be a
+// silent data failure — e.g. the feed rate-limits every name, so 0 snapshots are
+// written. Flag those so the ops alarm (keyed on `gp_scan_failed`) pages us.
+// `errorCount` = per-ticker fetch errors + per-ticker persist errors.
+export function assessScanHealth({ scanned, snapshotsWritten, errorCount }) {
+  if (scanned === 0) return { healthy: true, reason: null }; // nothing to scan
+  if (snapshotsWritten === 0) {
+    return { healthy: false, reason: `no snapshots written across ${scanned} names` };
+  }
+  const errRate = errorCount / scanned;
+  if (errRate >= 0.5) {
+    return { healthy: false, reason: `high error rate ${Math.round(errRate * 100)}% (${errorCount}/${scanned})` };
+  }
+  return { healthy: true, reason: null };
+}
+
 // Read the enabled watchlist rows. Small table → a Scan with a filter is fine.
 // Each row: { pk: "TICKER#<t>", ticker, sector, enabled, qualityTier }.
 async function loadEnabledWatchlist(tableName) {
@@ -74,8 +90,25 @@ async function getMarketRegime() {
   };
 }
 
-export async function handler() {
+export async function handler(event) {
   const startedAt = new Date().toISOString();
+
+  // Post-deploy SMOKE TEST: verify the handler LOADS and can reach its core
+  // dependencies (config + watchlist reads) — without running a full scan,
+  // fetching feeds, writing data, or sending alerts. Catches the deploy-time
+  // failure class unit tests can't: ESM load crash, missing env vars, IAM
+  // denials. Invoked by the deploy pipeline with {"smokeTest": true}.
+  if (event?.smokeTest) {
+    const config = await getActiveConfig(process.env.CONFIG_TABLE);
+    const watchlist = await loadEnabledWatchlist(process.env.WATCHLIST_TABLE);
+    return {
+      ok: true,
+      smoke: true,
+      configLoaded: !!config,
+      watchlistCount: watchlist.length,
+      strategyVersion: STRATEGY_VERSION,
+    };
+  }
 
   // 1) Tunables (gp-config ACTIVE row) — the only source of thresholds/costs.
   const config = await getActiveConfig(process.env.CONFIG_TABLE);
@@ -191,8 +224,22 @@ export async function handler() {
     }
   }
 
+  // Bad-scan self-alarm: a run with 0 snapshots or a high error rate is a silent
+  // data failure even though the Lambda "succeeded". Emit gp_scan_failed so the
+  // ops alarm pages us via Telegram.
+  const health = assessScanHealth({
+    scanned: watchlist.length,
+    snapshotsWritten,
+    errorCount: tally.ERROR + writeErrors,
+  });
+  if (!health.healthy) {
+    console.error(`gp_scan_failed: degraded scan — ${health.reason}`);
+  }
+
   const summary = {
     ok: true,
+    degraded: !health.healthy,
+    degradedReason: health.reason,
     strategyVersion: STRATEGY_VERSION,
     startedAt,
     finishedAt: new Date().toISOString(),
