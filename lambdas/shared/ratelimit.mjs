@@ -28,3 +28,40 @@ export function createLimiter(minIntervalMs) {
 // Shared Finnhub limiter: ~50 calls/min (1200ms gap) — comfortably under the
 // 60/min free-tier cap, shared across marketdata + fundamentals.
 export const finnhub = createLimiter(1200);
+
+// Tiingo limiter — the recon's "Tiingo is unthrottled" assumption was disproven by
+// live 429s. This spaces Tiingo calls to avoid BURST 429s (e.g. regime + RS + the
+// first tickers firing together, or concurrent runs). NOTE: it cannot raise the
+// HOURLY allocation (~50/hr on free) — that ceiling is respected by keeping the
+// watchlist small; see docs.
+export const tiingo = createLimiter(350);
+
+// True when an error looks like a provider rate-limit / quota response (Tiingo
+// HTTP 429 or its plain-text quota body; Finnhub 429).
+export function isRateLimited(err) {
+  return /\b429\b|rate.?limit|quota|hourly|allocation|too many/i.test(err?.message ?? "");
+}
+
+// Retry `fn` on a transient/rate-limit error, BOUNDED. Two jobs: survive a
+// transient/burst 429, and guarantee a single rate-limit response can NEVER crash
+// a run — after `retries` the final throw is left for the caller to catch
+// (per-ticker loop / regime guard). Hourly-allocation exhaustion won't clear in
+// seconds, so retries are few. `sleep` is injectable for tests.
+export async function withRetry(fn, opts = {}) {
+  const {
+    retries = 2,
+    baseDelayMs = 600,
+    shouldRetry = isRateLimited,
+    sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  } = opts;
+  let attempt = 0;
+  for (;;) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= retries || !shouldRetry(err)) throw err;
+      await sleep(baseDelayMs * 2 ** attempt);
+      attempt += 1;
+    }
+  }
+}
