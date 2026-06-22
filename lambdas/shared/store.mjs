@@ -69,6 +69,10 @@ export function snapshotMetrics(md) {
     return63d: m.return63d ?? null,
     return126d: m.return126d ?? null,
     return252d: m.return252d ?? null,
+    // Relative strength (capture-only, cross-sectional; not scored):
+    rsRaw: m.rsRaw ?? null,
+    rsRank: m.rsRank ?? null,
+    rsVsSpy: m.rsVsSpy ?? null,
     nearestSupport: m.nearestSupport?.price ?? null,
     nearestResistance: m.nearestResistance?.price ?? null,
     daysToEarnings: m.daysToEarnings ?? null,
@@ -125,7 +129,7 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
     // Open an outcome row for a BUY_CANDIDATE. Created once only: the conditional
     // put fails (silently, here) if the signal already exists, so re-running the
     // scan can't reset or overwrite a labeled outcome.
-    async openOutcome(result, { sector = null } = {}) {
+    async openOutcome(result, { sector = null, rs = null } = {}) {
       const entryDate = result.dataAsOf;
       if (!entryDate) throw new Error(`cannot open outcome ${result.ticker}: no entry date`);
       const item = {
@@ -142,6 +146,10 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
         stop: result.stop,
         target: result.target,
         riskReward: result.riskReward,
+        // Relative strength at entry (capture-only, for /analyze by-RS-rank later):
+        rsRaw: rs?.rsRaw ?? null,
+        rsRank: rs?.rsRank ?? null,
+        rsVsSpy: rs?.rsVsSpy ?? null,
         openedAt: new Date().toISOString(),
       };
       try {

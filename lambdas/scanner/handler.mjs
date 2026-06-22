@@ -1,21 +1,17 @@
-// scanner/handler.mjs — the daily scan (SKELETON, Phase 3).
+// scanner/handler.mjs — the daily scan.
 //
-// What it does TODAY (Phase 3): reads the live tunables (gp-config), loads the
-// enabled watchlist (gp-watchlist), establishes the market regime (SPY vs its
-// 200MA), then scores every enabled ticker with the deterministic engine and logs
-// a structured summary.
+// Flow: read tunables (gp-config) → establish the market regime (SPY vs 200MA;
+// abort if SPY data is stale) → load the enabled watchlist → for every name:
+// score with the deterministic engine, snapshot it, open an outcome row for each
+// BUY_CANDIDATE, and send an OBSERVE-mode Telegram alert.
 //
-// What it deliberately does NOT do yet:
-//   - Phase 4: write a gp-snapshots row per ticker (+ strategyVersion, dataAsOf)
-//             and open a gp-outcomes row for each BUY_CANDIDATE.
-//   - Phase 6: send any Telegram message / narration.
-// Those points are marked `// PHASE 4` / `// PHASE 6` below.
+// Two-pass: pass 1 gathers market data + fundamentals for the whole universe so
+// relative-strength rank can be computed CROSS-SECTIONALLY (it needs every name);
+// pass 2 scores, persists, and alerts. RS is CAPTURE-ONLY — recorded on the
+// snapshot/outcome, never used in scoring/gates/threshold.
 //
-// Discipline carried from CLAUDE.md:
-//   - Tunables come from gp-config, never from code/env.
-//   - A stale feed is never scored as current. If the market-regime feed (SPY) is
-//     stale, we abort the whole run rather than score on bad context.
-//   - Math decides; this handler only orchestrates reads and the scoring call.
+// Discipline (CLAUDE.md): tunables come from gp-config; a stale feed is never
+// scored as current; math decides — this handler only orchestrates.
 
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, ScanCommand } from "@aws-sdk/lib-dynamodb";
@@ -23,6 +19,7 @@ import { DynamoDBDocumentClient, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import { getActiveConfig } from "../shared/config.mjs";
 import { getMarketData } from "../shared/marketdata.mjs";
 import { getFundamentals } from "../shared/fundamentals.mjs";
+import { rsRaw, rsVsSpy, rankPercentiles } from "../shared/rs.mjs";
 import { score, DECISION } from "../shared/scoring.mjs";
 import { createStore } from "../shared/store.mjs";
 import { buildPayload, narrate, composeRichMessage, FALLBACK_NARRATION } from "../shared/narration.mjs";
@@ -61,7 +58,8 @@ async function loadEnabledWatchlist(tableName) {
 }
 
 // SPY below its own 200MA → risk-off regime (a hard gate in scoring). Returns
-// { spyBelow200ma } or null when SPY data is stale/insufficient (→ abort run).
+// { spyBelow200ma, asOf, spyReturn126d } or null when SPY data is stale/short
+// (→ abort run). spyReturn126d feeds the (capture-only) rsVsSpy alpha.
 async function getMarketRegime() {
   const spy = await getMarketData(REGIME_TICKER);
   if (!spy || spy.fresh === false || typeof spy.ma200 !== "number") {
@@ -69,7 +67,11 @@ async function getMarketRegime() {
   }
   // asOf is the canonical scan trading day, reused to key snapshots whose own
   // data may be missing (NO_DATA names).
-  return { spyBelow200ma: spy.close < spy.ma200, asOf: spy.dataAsOf };
+  return {
+    spyBelow200ma: spy.close < spy.ma200,
+    asOf: spy.dataAsOf,
+    spyReturn126d: spy.return126d ?? null,
+  };
 }
 
 export async function handler() {
@@ -82,20 +84,17 @@ export async function handler() {
   //    we score nothing rather than risk scoring on bad context.
   const regime = await getMarketRegime();
   if (!regime) {
-    // `gp_scan_failed` is the ops keyword wired to the CloudWatch alarm (Phase 6).
+    // `gp_scan_failed` is the ops keyword wired to the CloudWatch alarm.
     console.error("gp_scan_failed: SPY regime data stale/unavailable; aborting scan");
     return { ok: false, reason: "regime_data_stale", strategyVersion: STRATEGY_VERSION };
   }
 
   // 3) Universe.
   const watchlist = await loadEnabledWatchlist(process.env.WATCHLIST_TABLE);
-
-  // 4) Score + persist each name. Per-ticker failures must not abort the scan.
   const store = createStore();
 
   // Correlation gate input: count currently-OPEN outcomes per sector (measured at
-  // scan start; new opens within this same scan are not retro-counted — the cap is
-  // provisional). Feeds marketContext.correlatedPositions per ticker.
+  // scan start; new opens within this same scan are not retro-counted).
   const openBySector = {};
   for (const o of await store.listOpenOutcomes()) {
     const sec = o.sector ?? "unknown";
@@ -110,69 +109,85 @@ export async function handler() {
   let alertErrors = 0;
   const candidates = [];
 
+  // --- Pass 1: gather market data + fundamentals for the whole universe.
+  // Finnhub calls are throttled inside marketdata/fundamentals (see ratelimit.mjs).
+  // A per-ticker fetch failure is logged and the name is dropped from this run.
+  const gathered = [];
   for (const entry of watchlist) {
     try {
       const md = await getMarketData(entry.ticker);
-
-      const marketContext = {
-        spyBelow200ma: regime.spyBelow200ma,
-        // Live: open outcomes already held in this ticker's sector.
-        correlatedPositions: openBySector[entry.sector ?? "unknown"] ?? 0,
-        // PHASE (later): real news classification (issue #1). Clean tape until then.
-        newsLevel: "none",
-        sector: entry.sector,
-      };
-
-      const result = score(md, config, marketContext);
-      tally[result.decision] = (tally[result.decision] ?? 0) + 1;
-
-      // Persist: one daily snapshot per scored name; open an outcome row for each
-      // BUY_CANDIDATE (idempotent). A write failure for one name is logged and
-      // skipped — it must not sink the scan. Still NO alerts (that's Phase 6).
-      try {
-        // Capture-only O'Neil fundamentals (best-effort; never sinks a scan,
-        // not scored). Recorded on the snapshot for later Phase-8 analysis.
-        const fundamentals = await getFundamentals(entry.ticker);
-        await store.writeSnapshot(result, {
-          asOf: regime.asOf, sector: entry.sector, marketData: md, fundamentals,
-        });
-        snapshotsWritten += 1;
-        if (result.decision === DECISION.BUY_CANDIDATE) {
-          const opened = await store.openOutcome(result, { sector: entry.sector });
-          if (opened.opened) outcomesOpened += 1;
-        }
-      } catch (werr) {
-        writeErrors += 1;
-        console.error(`gp_scan_failed: persist ${entry.ticker}: ${werr.message}`);
-      }
-
-      if (result.decision === DECISION.BUY_CANDIDATE) {
-        candidates.push({ ticker: entry.ticker, score: result.score, rr: result.riskReward });
-
-        // OBSERVE-mode Telegram alert. Numbers are built deterministically from
-        // the result; the LLM only adds a flavor sentence (and on failure we use
-        // a fixed fallback, so the alert still sends). alertMode comes from config
-        // (observe by default) — going live is a human act, never set here.
-        try {
-          const payload = buildPayload(result, md, config.alertMode);
-          let flavor;
-          try {
-            flavor = await narrate(payload);
-          } catch (nerr) {
-            flavor = FALLBACK_NARRATION;
-            console.error(`gp_scan_failed: narrate ${entry.ticker}: ${nerr.message}`);
-          }
-          await sendTelegram(composeRichMessage(result, md, config, config.alertMode, flavor));
-          alertsSent += 1;
-        } catch (aerr) {
-          alertErrors += 1;
-          console.error(`gp_scan_failed: alert ${entry.ticker}: ${aerr.message}`);
-        }
-      }
+      const fundamentals = await getFundamentals(entry.ticker); // best-effort, never throws
+      gathered.push({ entry, md, fundamentals });
     } catch (err) {
       tally.ERROR += 1;
-      // Log and continue — one bad ticker should not sink the run.
       console.error(`gp_scan_failed: ${entry.ticker}: ${err.message}`);
+    }
+  }
+
+  // --- Relative strength (CAPTURE-ONLY, cross-sectional). Compute rsRaw + rsVsSpy
+  // per name, then percentile-rank rsRaw across the gathered universe. Stored on
+  // the snapshot/outcome for later analysis; NOT used in scoring.
+  for (const g of gathered) {
+    g.md.rsRaw = rsRaw(g.md);
+    g.md.rsVsSpy = rsVsSpy(g.md, regime.spyReturn126d);
+  }
+  const rsRankMap = rankPercentiles(gathered.map((g) => ({ key: g.entry.ticker, value: g.md.rsRaw })));
+  for (const g of gathered) g.md.rsRank = rsRankMap.get(g.entry.ticker) ?? null;
+
+  // --- Pass 2: score, persist, alert.
+  for (const { entry, md, fundamentals } of gathered) {
+    const marketContext = {
+      spyBelow200ma: regime.spyBelow200ma,
+      correlatedPositions: openBySector[entry.sector ?? "unknown"] ?? 0,
+      // PHASE (later): real news classification (issue #1). Clean tape until then.
+      newsLevel: "none",
+      sector: entry.sector,
+    };
+
+    const result = score(md, config, marketContext);
+    tally[result.decision] = (tally[result.decision] ?? 0) + 1;
+
+    // Persist: one daily snapshot per scored name; open an outcome row for each
+    // BUY_CANDIDATE (idempotent). A write failure for one name is logged and
+    // skipped — it must not sink the scan.
+    try {
+      await store.writeSnapshot(result, {
+        asOf: regime.asOf, sector: entry.sector, marketData: md, fundamentals,
+      });
+      snapshotsWritten += 1;
+      if (result.decision === DECISION.BUY_CANDIDATE) {
+        const opened = await store.openOutcome(result, {
+          sector: entry.sector,
+          rs: { rsRaw: md.rsRaw, rsRank: md.rsRank, rsVsSpy: md.rsVsSpy },
+        });
+        if (opened.opened) outcomesOpened += 1;
+      }
+    } catch (werr) {
+      writeErrors += 1;
+      console.error(`gp_scan_failed: persist ${entry.ticker}: ${werr.message}`);
+    }
+
+    if (result.decision === DECISION.BUY_CANDIDATE) {
+      candidates.push({ ticker: entry.ticker, score: result.score, rr: result.riskReward });
+
+      // OBSERVE-mode Telegram alert. Numbers are built deterministically from the
+      // result; the LLM only adds a flavor sentence (fixed fallback on failure).
+      // alertMode comes from config (observe by default) — live is a human act.
+      try {
+        const payload = buildPayload(result, md, config.alertMode);
+        let flavor;
+        try {
+          flavor = await narrate(payload);
+        } catch (nerr) {
+          flavor = FALLBACK_NARRATION;
+          console.error(`gp_scan_failed: narrate ${entry.ticker}: ${nerr.message}`);
+        }
+        await sendTelegram(composeRichMessage(result, md, config, config.alertMode, flavor));
+        alertsSent += 1;
+      } catch (aerr) {
+        alertErrors += 1;
+        console.error(`gp_scan_failed: alert ${entry.ticker}: ${aerr.message}`);
+      }
     }
   }
 

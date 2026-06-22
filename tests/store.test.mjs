@@ -99,7 +99,10 @@ test("writeSnapshot derives v2 capture booleans (Minervini/Turtle) when inputs p
 test("writeSnapshot records fundamentals + RS returns (capture-only)", async () => {
   const client = fakeClient();
   const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });
-  const md = { close: 100, return63d: 5.5, return126d: 12.1, return252d: 30 };
+  const md = {
+    close: 100, return63d: 5.5, return126d: 12.1, return252d: 30,
+    rsRaw: 53.1, rsRank: 88, rsVsSpy: 11.2,
+  };
   const fundamentals = { epsGrowthQtr: 23.3, salesGrowthQtr: 18, roeTTM: 33 };
   await store.writeSnapshot(buyResult, { asOf: "2026-06-18", marketData: md, fundamentals });
   const { Item } = client.calls[0];
@@ -107,6 +110,9 @@ test("writeSnapshot records fundamentals + RS returns (capture-only)", async () 
   assert.equal(Item.fundamentals.roeTTM, 33);
   assert.equal(Item.metrics.return126d, 12.1);
   assert.equal(Item.metrics.return252d, 30);
+  assert.equal(Item.metrics.rsRaw, 53.1);
+  assert.equal(Item.metrics.rsRank, 88);
+  assert.equal(Item.metrics.rsVsSpy, 11.2);
 });
 
 test("writeSnapshot fundamentals defaults to null when not provided", async () => {
@@ -150,11 +156,14 @@ test("writeSnapshot throws when no as-of date is available at all", async () => 
   );
 });
 
-test("openOutcome opens a conditional OPEN row with the right keys", async () => {
+test("openOutcome opens a conditional OPEN row with the right keys + RS capture", async () => {
   const client = fakeClient();
   const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });
 
-  const r = await store.openOutcome(buyResult, { sector: "Technology" });
+  const r = await store.openOutcome(buyResult, {
+    sector: "Technology",
+    rs: { rsRaw: 42.5, rsRank: 88, rsVsSpy: 11.2 },
+  });
 
   assert.equal(r.opened, true);
   const { TableName, Item, ConditionExpression } = client.calls[0];
@@ -166,7 +175,17 @@ test("openOutcome opens a conditional OPEN row with the right keys", async () =>
   assert.equal(Item.stop, 97);
   assert.equal(Item.target, 110);
   assert.equal(Item.strategyVersion, "gp-1.0.0");
+  assert.equal(Item.rsRank, 88); // captured RS at entry
+  assert.equal(Item.rsRaw, 42.5);
+  assert.equal(Item.rsVsSpy, 11.2);
   assert.equal(ConditionExpression, "attribute_not_exists(pk)");
+});
+
+test("openOutcome RS fields default to null when rs not provided", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, outcomesTable: "T-out" });
+  await store.openOutcome(buyResult, { sector: "Technology" });
+  assert.equal(client.calls[0].Item.rsRank, null);
 });
 
 test("openOutcome is idempotent — already-open signal returns opened:false, no throw", async () => {
