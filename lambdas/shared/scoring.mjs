@@ -5,11 +5,16 @@
 // Contract:
 //   score(marketData, config, marketContext) -> result
 //
-//   marketData    : output of getMarketData() (or NO_DATA shape with fresh:false)
+//   marketData    : output of getMarketData() (or NO_DATA shape with fresh:false).
+//                   The scanner also attaches `rsRank` (cross-sectional percentile).
 //   config        : the gp-config ACTIVE row (tunables) — injected, never hardcoded
 //   marketContext : run-level context the scanner supplies:
 //                     { spyBelow200ma:boolean, correlatedPositions:number,
-//                       newsLevel:'none'|'low'|'medium'|'high' }
+//                       newsLevel:'none'|'low'|'medium'|'high',
+//                       fundamentals:object|null,        // gp-2.0.0 growthQuality input
+//                       sectorStrengthPct:number|null }  // gp-2.0.0 sectorStrength input
+//   The three gp-2.0.0 gradient inputs (marketData.rsRank, fundamentals,
+//   sectorStrengthPct) are ALWAYS neutral 0 when absent — never a gate, never NO_DATA.
 //
 // Pipeline: freshness/validation -> gates (reject, don't score) -> derive
 // stop/target/R:R -> score 0..100 with per-component breakdown.
@@ -22,18 +27,30 @@ export const DECISION = {
   BUY_CANDIDATE: "BUY_CANDIDATE",
 };
 
-// Max points per component. empiricalEdge stays at a fixed neutral 15 until real
-// gp-outcomes data fills it (Phase 8), so the achievable ceiling now is 85, not
-// 100. buyScoreThreshold is PROVISIONAL and must account for this.
+// Max points per component (gp-2.0.0; sums to 100). empiricalEdge stays a fixed
+// NEUTRAL placeholder at the MIDPOINT of its weight (7.5 of 15) until real
+// gp-outcomes data fills it (Phase 8), so the achievable ceiling now is 92.5, not
+// 100. rsRank/growthQuality/sectorStrength are gradient components (never gates);
+// missing RS/fundamental/sector data contributes 0, never a rejection.
+// buyScoreThreshold is PROVISIONAL and must account for this.
 export const WEIGHTS = {
-  empiricalEdge: 30,
-  trend: 20,
+  empiricalEdge: 15,
   setup: 20,
-  momentum: 15,
-  volume: 10,
-  news: 5,
+  trend: 15,
+  momentum: 10,
+  volume: 8,
+  news: 2,
+  rsRank: 12,
+  growthQuality: 13,
+  sectorStrength: 5,
 };
-export const NEUTRAL_EMPIRICAL_EDGE = 15;
+export const NEUTRAL_EMPIRICAL_EDGE = 7.5; // midpoint of the 15 weight; ceiling 92.5 until Phase 8
+
+// growthQuality bounds: clamp raw Finnhub YoY % so a garbage reading (loss-to-profit
+// ~9000%, or $0.01→$0.02 noise) can't dominate; saturate the gradient at GROWTH_SAT.
+const GROWTH_CLAMP_LO = -100;
+const GROWTH_CLAMP_HI = 100;
+const GROWTH_SAT = 50; // +50% YoY (avg of present metrics) tops the bucket
 
 // RSI "healthy" momentum band (v1, signed off).
 const RSI_HEALTHY_LOW = 40;
@@ -110,6 +127,11 @@ export function score(marketData, config, marketContext = {}) {
     correlatedPositions: marketContext.correlatedPositions ?? 0,
     // Normalize so "HIGH"/"High" still trip the news gate.
     newsLevel: String(marketContext.newsLevel ?? "none").toLowerCase(),
+    // gp-2.0.0 gradient inputs (always neutral-0 inside the scorers if absent;
+    // never a gate, never NO_DATA).
+    fundamentals: marketContext.fundamentals ?? null,
+    sectorStrengthPct:
+      typeof marketContext.sectorStrengthPct === "number" ? marketContext.sectorStrengthPct : null,
   };
 
   const atrStopMultiple = config.atrStopMultiple;
@@ -164,14 +186,19 @@ export function score(marketData, config, marketContext = {}) {
 
   // --- 3. Score 0..100 with breakdown (all gates passed).
   const breakdown = {
-    empiricalEdge: NEUTRAL_EMPIRICAL_EDGE, // fixed neutral until Phase 8
-    trend: scoreTrend(close, ma50, ma200),
+    empiricalEdge: NEUTRAL_EMPIRICAL_EDGE, // fixed neutral midpoint until Phase 8
     setup: scoreSetup(close, atr, nearestSupport, riskReward, minRiskReward),
+    trend: scoreTrend(close, ma50, ma200),
     momentum: scoreMomentum(rsi),
     volume: scoreVolume(volume, avgVolume30),
     news: scoreNews(ctx.newsLevel),
+    rsRank: scoreRsRank(marketData.rsRank),
+    growthQuality: scoreGrowthQuality(ctx.fundamentals),
+    sectorStrength: scoreSectorStrength(ctx.sectorStrengthPct),
   };
-  const total = Object.values(breakdown).reduce((a, b) => a + b, 0);
+  // Round the total: gradient components are fractional, so sum to 2dp (keeps the
+  // breakdown-sums-to-score invariant exact and scores stable for /analyze buckets).
+  const total = round(Object.values(breakdown).reduce((a, b) => a + b, 0), 2);
 
   const decision = total >= buyScoreThreshold ? DECISION.BUY_CANDIDATE : DECISION.NO_SIGNAL;
   return {
@@ -215,12 +242,12 @@ function computeSizing(entry, stop, config) {
 
 // --- Component scorers (each capped at its weight) -------------------------
 
-// trend (20): stacking of price/MA alignment.
+// trend (15): stacking of price/MA alignment.
 function scoreTrend(close, ma50, ma200) {
   let s = 0;
-  if (close > ma200) s += 6;
-  if (close > ma50) s += 7;
-  if (ma50 > ma200) s += 7;
+  if (close > ma200) s += 5;
+  if (close > ma50) s += 5;
+  if (ma50 > ma200) s += 5;
   return clamp(s, 0, WEIGHTS.trend);
 }
 
@@ -241,30 +268,58 @@ function scoreSetup(close, atr, nearestSupport, riskReward, minRiskReward) {
   return clamp(s, 0, WEIGHTS.setup);
 }
 
-// momentum (15): RSI healthy band 40..70, best in the 50..65 sweet spot.
+// momentum (10): RSI healthy band 40..70, best in the 50..65 sweet spot.
 function scoreMomentum(rsi) {
-  if (rsi >= 50 && rsi <= 65) return 15;
-  if (rsi >= RSI_HEALTHY_LOW && rsi <= RSI_HEALTHY_HIGH) return 9;
-  if ((rsi >= 30 && rsi < RSI_HEALTHY_LOW) || (rsi > RSI_HEALTHY_HIGH && rsi <= 75)) return 4;
+  if (rsi >= 50 && rsi <= 65) return 10;
+  if (rsi >= RSI_HEALTHY_LOW && rsi <= RSI_HEALTHY_HIGH) return 6;
+  if ((rsi >= 30 && rsi < RSI_HEALTHY_LOW) || (rsi > RSI_HEALTHY_HIGH && rsi <= 75)) return 3;
   return 0;
 }
 
-// volume (10): today's participation vs 30-day average.
+// volume (8): today's participation vs 30-day average.
 function scoreVolume(volume, avgVolume30) {
   if (avgVolume30 <= 0) return 0;
   const r = volume / avgVolume30;
-  if (r >= 1.0 && r <= 2.0) return 10; // healthy participation
-  if (r > 2.0 && r <= 3.0) return 7;   // elevated
-  if (r >= 0.7 && r < 1.0) return 6;   // a touch light
-  if (r > 3.0) return 4;               // possibly climactic
-  return 3;                            // thin
+  if (r >= 1.0 && r <= 2.0) return 8; // healthy participation
+  if (r > 2.0 && r <= 3.0) return 6;  // elevated
+  if (r >= 0.7 && r < 1.0) return 5;  // a touch light
+  if (r > 3.0) return 3;              // possibly climactic
+  return 2;                           // thin
 }
 
-// news (5): clean tape scores full; HIGH is already gated out.
+// news (2): clean tape scores full; HIGH is already gated out.
 function scoreNews(newsLevel) {
-  if (newsLevel === "none" || newsLevel === "low") return 5;
-  if (newsLevel === "medium") return 2;
+  if (newsLevel === "none" || newsLevel === "low") return 2;
+  if (newsLevel === "medium") return 1;
   return 0;
+}
+
+// rsRank (12): smooth gradient over the cross-sectional percentile (1..99). null →
+// neutral 0, never a rejection. Coarse/noisy at ~43 names by design — modest weight.
+function scoreRsRank(rsRank) {
+  if (typeof rsRank !== "number" || !Number.isFinite(rsRank)) return 0;
+  return round(WEIGHTS.rsRank * (clamp(rsRank, 1, 99) / 99), 2);
+}
+
+// growthQuality (13): ONE component from EPS + revenue quarterly YoY (correlated, so
+// combined to avoid double-counting). Clamp each metric so an extreme Finnhub reading
+// can't dominate; average whichever are present; smooth ramp, full at GROWTH_SAT.
+// Both missing → neutral 0 (a name with no fundamentals stays fully scorable on price).
+function scoreGrowthQuality(fundamentals) {
+  const vals = [fundamentals?.epsGrowthQtr, fundamentals?.salesGrowthQtr]
+    .filter((v) => typeof v === "number" && Number.isFinite(v))
+    .map((v) => clamp(v, GROWTH_CLAMP_LO, GROWTH_CLAMP_HI));
+  if (vals.length === 0) return 0;
+  const g = vals.reduce((a, b) => a + b, 0) / vals.length;
+  return round(WEIGHTS.growthQuality * (clamp(g, 0, GROWTH_SAT) / GROWTH_SAT), 2);
+}
+
+// sectorStrength (5): gradient over the sector's cross-sectional strength percentile
+// (mean rsRaw per sector, ranked across sectors — computed in the scanner). Undersized
+// (<3 names) or missing sector arrives as null → neutral 0.
+function scoreSectorStrength(pct) {
+  if (typeof pct !== "number" || !Number.isFinite(pct)) return 0;
+  return round(WEIGHTS.sectorStrength * (clamp(pct, 1, 99) / 99), 2);
 }
 
 function clamp(n, lo, hi) {

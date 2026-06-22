@@ -19,7 +19,7 @@ import { DynamoDBDocumentClient, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import { getActiveConfig } from "../shared/config.mjs";
 import { getMarketData, KEY_PATHS } from "../shared/marketdata.mjs";
 import { getFundamentals } from "../shared/fundamentals.mjs";
-import { rsRaw, rsVsSpy, rankPercentiles } from "../shared/rs.mjs";
+import { rsRaw, rsVsSpy, rankPercentiles, sectorStrengthPercentiles } from "../shared/rs.mjs";
 import { score, DECISION } from "../shared/scoring.mjs";
 import { createStore } from "../shared/store.mjs";
 import { buildPayload, narrate, composeRichMessage, FALLBACK_NARRATION } from "../shared/narration.mjs";
@@ -198,6 +198,12 @@ export async function handler(event) {
   const rsRankMap = rankPercentiles(gathered.map((g) => ({ key: g.entry.ticker, value: g.md.rsRaw })));
   for (const g of gathered) g.md.rsRank = rsRankMap.get(g.entry.ticker) ?? null;
 
+  // --- Sector strength (gp-2.0.0 score component, cross-sectional). Mean rsRaw per
+  // sector, ranked across sectors; sectors with <3 names are not meaningful → null.
+  const sectorPctMap = sectorStrengthPercentiles(
+    gathered.map((g) => ({ sector: g.entry.sector, rsRaw: g.md.rsRaw }))
+  );
+
   // --- Pass 2: score, persist, alert.
   for (const { entry, md, fundamentals } of gathered) {
     const marketContext = {
@@ -206,6 +212,9 @@ export async function handler(event) {
       // PHASE (later): real news classification (issue #1). Clean tape until then.
       newsLevel: "none",
       sector: entry.sector,
+      // gp-2.0.0 gradient inputs (neutral 0 inside score() when null):
+      fundamentals, // growthQuality
+      sectorStrengthPct: sectorPctMap.get(entry.sector) ?? null, // sectorStrength
     };
 
     const result = score(md, config, marketContext);
