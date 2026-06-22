@@ -59,3 +59,24 @@ jobs:
           export PATH="$PWD/node_modules/.bin:$PATH"
           sam build
           sam deploy --no-confirm-changeset --no-fail-on-empty-changeset
+
+      # Post-deploy smoke test: invoke the just-deployed scanner in dry-run mode
+      # and fail loudly if it doesn't actually RUN. Catches the deploy-time crash
+      # class (ESM load error, missing env, IAM denial) that `sam build` and the
+      # artifact-load guard can't. Does not fetch feeds, write data, or alert.
+      - name: Post-deploy smoke test (scanner runs)
+        run: |
+          set -e
+          ERR=$(aws lambda invoke --function-name gp-scanner --region us-east-1 \
+            --cli-binary-format raw-in-base64-out \
+            --payload '{"smokeTest":true}' /tmp/smoke.json \
+            --query FunctionError --output text)
+          echo "FunctionError: $ERR"
+          echo "Response: $(cat /tmp/smoke.json)"
+          if [ "$ERR" != "None" ]; then
+            echo "::error::Scanner smoke test FAILED — handler errored on invoke"; exit 1
+          fi
+          if ! grep -qE '"ok": *true' /tmp/smoke.json; then
+            echo "::error::Scanner smoke test FAILED — response not ok"; exit 1
+          fi
+          echo "✓ scanner smoke test passed"
