@@ -64,6 +64,11 @@ export function snapshotMetrics(md) {
     volumeRatio,
     high20d: m.high20d ?? null,
     high55d: m.high55d ?? null,
+    // Raw relative-strength inputs (RS rank computed later, cross-sectionally):
+    return21d: m.return21d ?? null,
+    return63d: m.return63d ?? null,
+    return126d: m.return126d ?? null,
+    return252d: m.return252d ?? null,
     nearestSupport: m.nearestSupport?.price ?? null,
     nearestResistance: m.nearestResistance?.price ?? null,
     daysToEarnings: m.daysToEarnings ?? null,
@@ -87,7 +92,7 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
     // One daily snapshot per scored name. `asOf` (YYYY-MM-DD) is the trading day
     // the row is keyed to — the data's dataAsOf, with a caller-supplied fallback
     // for the NO_DATA case where the result has none.
-    async writeSnapshot(result, { asOf, sector = null, marketData = null } = {}) {
+    async writeSnapshot(result, { asOf, sector = null, marketData = null, fundamentals = null } = {}) {
       const day = result.dataAsOf ?? asOf;
       if (!day) throw new Error(`cannot snapshot ${result.ticker}: no as-of date`);
       const item = {
@@ -108,6 +113,8 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
         // Raw inputs for Phase 8 analysis (recorded for EVERY decision, so we can
         // study what predicts outcomes even for gate-rejected names).
         metrics: snapshotMetrics(marketData),
+        // Capture-only O'Neil fundamentals (not scored). null when unavailable.
+        fundamentals: fundamentals ?? null,
         sector,
         scannedAt: new Date().toISOString(),
       };
