@@ -58,22 +58,15 @@ Parameters:
     Default: /gerchik-perchik/telegram/webhook_secret
     Description: SSM path to the Telegram webhook secret token (protects the control URL).
 
-  # Daily run times, in UTC (EventBridge crons are UTC-only). The US cash close is
-  # 16:00 ET and Tiingo EOD data settles ~18:00 ET. These crons are a fixed UTC
-  # time that does NOT auto-adjust for DST — but they're chosen so BOTH seasons
-  # land in a safe NY evening (after close + data settle):
+  # Daily run times are inlined as cron LITERALS on each schedule event below
+  # (not parameters): SAM space-splits parameter values, which corrupts a cron
+  # string, and CloudFormation keeps stale previous parameter values across
+  # deploys. A literal avoids both. EventBridge crons are UTC-only; these are
+  # chosen so BOTH US seasons land in a safe NY evening (after the 16:00 ET close
+  # and ~18:00 ET EOD-data settle):
   #   scan  23:30 UTC = 7:30pm EDT / 6:30pm EST
   #   label 23:45 UTC = 7:45pm EDT / 6:45pm EST
-  # (samconfig.toml pins these; both stay before midnight UTC so MON-FRI holds.)
-  ScanScheduleExpression:
-    Type: String
-    Default: cron(30 23 ? * MON-FRI *)
-    Description: UTC cron for the post-close daily scan (~6:30-7:30pm ET).
-
-  LabelScheduleExpression:
-    Type: String
-    Default: cron(45 23 ? * MON-FRI *)
-    Description: UTC cron for the daily outcome-labeling pass (~15min after scan).
+  # Both stay before midnight UTC so the MON-FRI day-of-week holds.
 
   # Deploy-time baseline for the scan schedule. Defaults OFF so deploys never
   # silently start the scanner before the pipeline is ready (no snapshots until
@@ -269,7 +262,7 @@ Resources:
           Properties:
             Name: gp-scanner-schedule
             Description: Daily post-close Gerchik-Perchik scan (toggled via Telegram).
-            Schedule: !Ref ScanScheduleExpression
+            Schedule: cron(30 23 ? * MON-FRI *) # 7:30pm EDT / 6:30pm EST
             Enabled: !If [ScheduleIsEnabled, true, false]
 
   # ===========================================================================
@@ -316,7 +309,7 @@ Resources:
           Properties:
             Name: gp-labeler-schedule
             Description: Daily Gerchik-Perchik outcome labeling pass.
-            Schedule: !Ref LabelScheduleExpression
+            Schedule: cron(45 23 ? * MON-FRI *) # 7:45pm EDT / 6:45pm EST
             Enabled: !If [ScheduleIsEnabled, true, false]
 
   # ===========================================================================

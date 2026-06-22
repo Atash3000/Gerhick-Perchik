@@ -21,22 +21,17 @@ s3_prefix = "gerchik-perchik"
 capabilities = "CAPABILITY_IAM"
 confirm_changeset = true
 tags = "Project=gerchik-perchik"
-# Pinned parameters (array form so cron values with spaces parse correctly).
-# - ScheduleEnabled=true: the system is live in observe mode and meant to run; this
-#   keeps deploys from silently disabling the schedules. Runtime /stop still works
-#   until the next deploy.
-# - Schedule crons are in UTC but chosen so BOTH US seasons land in a safe NY
-#   evening window (after the 4pm close + ~6pm ET EOD-data settle):
-#     scan  23:30 UTC = 7:30pm EDT / 6:30pm EST
-#     label 23:45 UTC = 7:45pm EDT / 6:45pm EST
-#   (Both stay before midnight UTC, so the MON-FRI day-of-week is correct.)
+# Pinned parameters. NOTE: cron schedules are NOT here — SAM space-splits
+# parameter values and corrupts a cron string, so the crons are inlined as
+# literals in template.yaml instead. Only space-free values are safe here.
+# - ScheduleEnabled=true: the system is live in observe mode and meant to run, so
+#   deploys no longer silently disable the schedules (runtime /stop still works
+#   until the next deploy).
 # - Telegram SSM paths pinned: the Lambda reads /gerchik-perchik/telegram/*, and
 #   CloudFormation otherwise keeps stale pre-rename values (UsePreviousValue),
 #   leaving the IAM role scoped to old paths → AccessDenied. Pinning matches code.
 parameter_overrides = [
   "ScheduleEnabled=true",
-  "ScanScheduleExpression=cron(30 23 ? * MON-FRI *)",
-  "LabelScheduleExpression=cron(45 23 ? * MON-FRI *)",
   "TelegramBotTokenPath=/gerchik-perchik/telegram/bot_token",
   "TelegramChatIdPath=/gerchik-perchik/telegram/chat_id",
   "TelegramWebhookSecretPath=/gerchik-perchik/telegram/webhook_secret",
