@@ -58,21 +58,22 @@ Parameters:
     Default: /gerchik-perchik/telegram/webhook_secret
     Description: SSM path to the Telegram webhook secret token (protects the control URL).
 
-  # Daily scan time, in UTC. The US cash close is 16:00 ET and Tiingo EOD data
-  # settles ~18:00 ET, so we scan well after that. NOTE: this is a fixed UTC
-  # cron — it does NOT auto-adjust for US daylight-saving. 22:30 UTC is ~18:30 ET
-  # (EDT) / ~17:30 ET (EST); revisit if the close-to-scan gap ever matters.
-  # On/off is controlled at RUNTIME by the control Lambda toggling this rule
-  # (Phase 7), never by redeploying with a different value.
+  # Daily run times, in UTC (EventBridge crons are UTC-only). The US cash close is
+  # 16:00 ET and Tiingo EOD data settles ~18:00 ET. These crons are a fixed UTC
+  # time that does NOT auto-adjust for DST — but they're chosen so BOTH seasons
+  # land in a safe NY evening (after close + data settle):
+  #   scan  23:30 UTC = 7:30pm EDT / 6:30pm EST
+  #   label 23:45 UTC = 7:45pm EDT / 6:45pm EST
+  # (samconfig.toml pins these; both stay before midnight UTC so MON-FRI holds.)
   ScanScheduleExpression:
     Type: String
-    Default: cron(30 22 ? * MON-FRI *)
-    Description: UTC cron for the post-close daily scan.
+    Default: cron(30 23 ? * MON-FRI *)
+    Description: UTC cron for the post-close daily scan (~6:30-7:30pm ET).
 
   LabelScheduleExpression:
     Type: String
-    Default: cron(0 23 ? * MON-FRI *)
-    Description: UTC cron for the daily outcome-labeling pass (after the scan).
+    Default: cron(45 23 ? * MON-FRI *)
+    Description: UTC cron for the daily outcome-labeling pass (~15min after scan).
 
   # Deploy-time baseline for the scan schedule. Defaults OFF so deploys never
   # silently start the scanner before the pipeline is ready (no snapshots until

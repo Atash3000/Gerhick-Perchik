@@ -21,12 +21,23 @@ s3_prefix = "gerchik-perchik"
 capabilities = "CAPABILITY_IAM"
 confirm_changeset = true
 tags = "Project=gerchik-perchik"
-# Scanner schedule stays OFF on every deploy until the pipeline is ready
-# (flip to true here, reviewed, when going to Phase 6+). See template.yaml.
-#
-# Telegram SSM paths are PINNED here: the Lambda code reads the dedicated
-# /gerchik-perchik/telegram/* paths, and CloudFormation otherwise keeps the stale
-# pre-rename parameter values (UsePreviousValue), which left the IAM role scoped to
-# the old paths → AccessDenied on GetParameter. Pinning forces the IAM ARNs to
-# match the code.
-parameter_overrides = "ScheduleEnabled=false TelegramBotTokenPath=/gerchik-perchik/telegram/bot_token TelegramChatIdPath=/gerchik-perchik/telegram/chat_id TelegramWebhookSecretPath=/gerchik-perchik/telegram/webhook_secret"
+# Pinned parameters (array form so cron values with spaces parse correctly).
+# - ScheduleEnabled=true: the system is live in observe mode and meant to run; this
+#   keeps deploys from silently disabling the schedules. Runtime /stop still works
+#   until the next deploy.
+# - Schedule crons are in UTC but chosen so BOTH US seasons land in a safe NY
+#   evening window (after the 4pm close + ~6pm ET EOD-data settle):
+#     scan  23:30 UTC = 7:30pm EDT / 6:30pm EST
+#     label 23:45 UTC = 7:45pm EDT / 6:45pm EST
+#   (Both stay before midnight UTC, so the MON-FRI day-of-week is correct.)
+# - Telegram SSM paths pinned: the Lambda reads /gerchik-perchik/telegram/*, and
+#   CloudFormation otherwise keeps stale pre-rename values (UsePreviousValue),
+#   leaving the IAM role scoped to old paths → AccessDenied. Pinning matches code.
+parameter_overrides = [
+  "ScheduleEnabled=true",
+  "ScanScheduleExpression=cron(30 23 ? * MON-FRI *)",
+  "LabelScheduleExpression=cron(45 23 ? * MON-FRI *)",
+  "TelegramBotTokenPath=/gerchik-perchik/telegram/bot_token",
+  "TelegramChatIdPath=/gerchik-perchik/telegram/chat_id",
+  "TelegramWebhookSecretPath=/gerchik-perchik/telegram/webhook_secret",
+]

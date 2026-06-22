@@ -112,7 +112,19 @@ node scripts/seed.mjs --apply
 
 ## Schedule / DST note
 
-The cron is a fixed **UTC** expression and does not auto-adjust for US daylight
-saving. `22:30 UTC` ≈ 18:30 ET (EDT) / 17:30 ET (EST) — comfortably after the
-16:00 ET close and ~18:00 ET EOD data settle. Revisit only if the close-to-scan gap
-ever matters.
+EventBridge crons are UTC-only. The crons are fixed UTC but chosen so **both** US
+seasons land in a safe NY evening — after the 16:00 ET close and ~18:00 ET EOD-data
+settle:
+
+| | UTC | EDT (summer) | EST (winter) |
+|---|---|---|---|
+| scan | 23:30 | 7:30pm ET | 6:30pm ET |
+| label | 23:45 | 7:45pm ET | 6:45pm ET |
+
+A harmless ~1h seasonal drift remains, but both seasons stay safely in the evening
+(this replaced an earlier winter time of ~5:30pm ET, which was before data settled).
+Both stay before midnight UTC so the MON-FRI day-of-week holds. Pinned in
+`samconfig.toml`, with `ScheduleEnabled=true` (the system runs in observe mode, so
+deploys no longer disable it). If exact NY wall-clock year-round is ever needed,
+move to EventBridge Scheduler (`ScheduleV2` + `ScheduleExpressionTimezone:
+America/New_York`) — a larger change that also reworks the `/start`/`/stop` toggle.
