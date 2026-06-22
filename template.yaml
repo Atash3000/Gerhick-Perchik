@@ -95,7 +95,7 @@ Globals:
     MemorySize: 512
     Timeout: 900                 # ~3 throttled Finnhub calls/ticker (1.2s limiter)
                                  # ≈ 3.6s/name; 900s (Lambda max) fits ~200 names
-                                 # with margin. ~65 names fit the old 300s ceiling.
+                                 # (universe is 199); ~65 fit the old 300s ceiling.
     Tags:
       Project: gerchik-perchik   # required on every resource
     Environment:

@@ -116,7 +116,6 @@
   { "pk": "TICKER#PNC"   , "ticker": "PNC"   , "sector": "Financials"    , "enabled": true, "qualityTier": "B" },
   { "pk": "TICKER#TFC"   , "ticker": "TFC"   , "sector": "Financials"    , "enabled": true, "qualityTier": "B" },
   { "pk": "TICKER#COF"   , "ticker": "COF"   , "sector": "Financials"    , "enabled": true, "qualityTier": "B" },
-  { "pk": "TICKER#BK"    , "ticker": "BK"    , "sector": "Financials"    , "enabled": true, "qualityTier": "B" },
   { "pk": "TICKER#AON"   , "ticker": "AON"   , "sector": "Financials"    , "enabled": true, "qualityTier": "B" },
   { "pk": "TICKER#ICE"   , "ticker": "ICE"   , "sector": "Financials"    , "enabled": true, "qualityTier": "B" },
   { "pk": "TICKER#CME"   , "ticker": "CME"   , "sector": "Financials"    , "enabled": true, "qualityTier": "B" },

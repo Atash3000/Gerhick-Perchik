@@ -145,9 +145,9 @@ cap is the limit we actually hit.)
 limiter** is. Each ticker makes ~3 Finnhub calls (earnings, profile, fundamentals),
 serialized through the 1.2s `finnhub` limiter ≈ **3.6s/name**. So the Lambda
 `Timeout` bounds the universe: 300s ≈ 65 names safe; **900s (Lambda max) ≈ 200
-names** (≈720s + overhead). The watchlist is ~200 names on a **dedicated** Tiingo
-key (200 unique/month ≪ 500 cap). One residual unknown: Tiingo's hourly *request*
-quota is unverified above 25 calls — if it bites at ~200 names/scan, B7 coverage
+names** (≈720s + overhead). The watchlist is 199 names on a **dedicated** Tiingo
+key (199 unique/month ≪ 500 cap). One residual unknown: Tiingo's hourly *request*
+quota is unverified above 25 calls — if it bites at ~199 names/scan, B7 coverage
 will flag it immediately and the watchlist can be trimmed or ramped via
 `enabled`/`/enable`. To grow past ~250, reduce Finnhub calls/ticker (cache
 profile/sector, fetch fundamentals only for candidates).
