@@ -20,6 +20,12 @@ test("rsVsSpy = ticker return126d minus SPY return126d", () => {
   assert.equal(rsVsSpy({}, 7), null);
 });
 
+test("rsVsSpy rejects non-finite inputs (NaN/Infinity) → null, never leaks NaN", () => {
+  assert.equal(rsVsSpy({ return126d: NaN }, 7), null);
+  assert.equal(rsVsSpy({ return126d: 5 }, Infinity), null);
+  assert.equal(rsVsSpy({ return126d: Infinity }, -Infinity), null);
+});
+
 test("rankPercentiles ranks 1-99, strongest highest", () => {
   const m = rankPercentiles([
     { key: "A", value: 100 },

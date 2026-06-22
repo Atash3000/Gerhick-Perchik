@@ -40,6 +40,18 @@ test("performance handles empty + no-loss sets", () => {
   assert.equal(allWin.profitFactor, null); // undefined ratio, no losses
 });
 
+test("performance uses the valid-profit subset as denominator (missing profitPct doesn't bias)", () => {
+  // 3 wins, 2 losses (valid) + 1 row missing profitPct. Win-rate must divide by the
+  // 5 valid rows (60%), NOT all 6 (which would wrongly read 50%).
+  const withMissing = [...SET, outcome(70, "TIMEOUT", undefined, {})];
+  const p = performance(withMissing);
+  assert.equal(p.n, 6); // total closed rows still reported
+  assert.equal(p.nValid, 5); // rows with a usable profitPct
+  assert.equal(p.invalidProfitCount, 1);
+  assert.equal(p.winRate, 60); // 3 / 5 valid, not 3 / 6
+  assert.equal(p.expectancyPct, 2.6); // unchanged — averaged over valid only
+});
+
 test("byScoreBucket groups by 10-pt band", () => {
   const b = byScoreBucket(SET);
   assert.equal(b["80s"].n, 1);

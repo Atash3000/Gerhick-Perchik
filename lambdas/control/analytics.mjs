@@ -27,14 +27,23 @@ function closedRows(outcomes, { strategyVersion, sinceEpochMs } = {}) {
 export function performance(rows) {
   const n = rows.length;
   if (n === 0) return { n: 0 };
-  const profits = rows.map((o) => o.profitPct).filter((x) => typeof x === "number");
+  // Rate/expectancy must share ONE denominator: the rows with a usable profitPct.
+  // Dividing win-rate by all rows while averaging only valid profits would bias the
+  // stats whenever a closed row is missing profitPct. Report both counts so a gap
+  // is visible rather than silently absorbed.
+  const profits = rows.map((o) => o.profitPct).filter((x) => typeof x === "number" && Number.isFinite(x));
+  const nValid = profits.length;
+  const invalidProfitCount = n - nValid;
+  if (nValid === 0) return { n, nValid: 0, invalidProfitCount };
   const wins = profits.filter((p) => p > 0);
   const losses = profits.filter((p) => p <= 0);
   const grossWin = wins.reduce((a, b) => a + b, 0);
   const grossLoss = Math.abs(losses.reduce((a, b) => a + b, 0));
   return {
     n,
-    winRate: round((wins.length / n) * 100, 1),
+    nValid,
+    invalidProfitCount,
+    winRate: round((wins.length / nValid) * 100, 1),
     avgWinPct: round(mean(wins), 2),
     avgLossPct: round(mean(losses), 2),
     expectancyPct: round(mean(profits), 2), // avg P&L per signal, after cost

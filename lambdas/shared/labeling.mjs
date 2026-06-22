@@ -67,8 +67,20 @@ export function labelSignal(signal, bars, config) {
     const bar = forward[i];
     daysHeld = i + 1;
 
-    // STOP is checked before TARGET: if both trade through on one day, assume the
-    // stop hit first (the pessimistic assumption).
+    // Gap-OPEN above target: a resting target sell fills at the open, before any
+    // intraday move could reach the stop — so the target is hit first even if the
+    // same bar later trades down through the stop. Checked before the stop rule.
+    // Exit at target (we still don't credit the favorable gap above it).
+    if (bar.open >= targetAdj) {
+      outcome = OUTCOME.TARGET;
+      hitTargetFirst = true;
+      exitPrice = targetAdj;
+      exitDate = bar.date;
+      break;
+    }
+
+    // STOP is checked before TARGET (intraday): if both trade through on one day
+    // WITHOUT a gap-open past either, assume the stop hit first (pessimistic).
     if (bar.low <= stopAdj) {
       outcome = OUTCOME.STOP;
       hitStopFirst = true;
