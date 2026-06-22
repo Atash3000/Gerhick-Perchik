@@ -17,16 +17,42 @@
 
 export const OUTCOME = { STOP: "STOP", TARGET: "TARGET", TIMEOUT: "TIMEOUT" };
 
-// Label one signal. `bars` = ascending daily bars [{date, open, high, low, close}]
-// (adjusted, same series the entry/stop/target were derived from). Only bars
-// strictly AFTER entryDate are walked (entry is the close of entryDate).
+// Split adjustment beyond this magnitude is treated as a split (vs a dividend).
+const SPLIT_THRESHOLD = 0.02; // |scaleFactor - 1| > 2%
+
+// Label one signal. `bars` = ascending daily ADJUSTED bars
+// [{date, open, high, low, close}]. Only bars strictly AFTER entryDate are walked
+// (entry is the close of entryDate).
 //
-// Returns the label object, or null when the signal is NOT yet resolved (no touch
-// and fewer than `timeoutTradingDays` bars have elapsed) — leave it OPEN and try
-// again next run.
+// SPLIT-SAFE RE-ANCHORING: Tiingo adjusts the whole series retroactively, so a
+// split after the signal opened re-scales the entry-era bars while the stored
+// entry/stop/target stay in the scan-time frame. We re-anchor: find the entry
+// bar's CURRENT adjusted close (entryAdjNow), compute scaleFactor =
+// entryAdjNow / storedEntry, and scale entry/stop/target into the current frame
+// before walking. scaleFactor == 1 → identical to the no-split case.
+//
+// Returns the label object (with audit fields), or null when the signal is NOT
+// yet resolved (no touch and fewer than `timeoutTradingDays` bars elapsed).
 export function labelSignal(signal, bars, config) {
   const { entry, stop, target, entryDate } = signal;
   const { feeBps, slippageBps, timeoutTradingDays } = config;
+
+  // Re-anchor to the entry bar in the current adjusted frame.
+  const entryBar = bars.find((b) => b.date === entryDate);
+  const entryBarMissing = !entryBar || !(entryBar.close > 0) || !(entry > 0);
+  const entryAdjNow = entryBarMissing ? null : entryBar.close;
+  const scaleFactor = entryBarMissing ? 1 : entryAdjNow / entry;
+
+  const entryAdj = entry * scaleFactor;
+  const stopAdj = stop * scaleFactor;
+  const targetAdj = target * scaleFactor;
+
+  const audit = {
+    scaleFactor: round(scaleFactor, 6),
+    splitAdjusted: Math.abs(scaleFactor - 1) > SPLIT_THRESHOLD,
+    entryAdjAtLabel: entryAdjNow == null ? null : round(entryAdjNow, 4),
+    entryBarMissing,
+  };
 
   const forward = bars.filter((b) => b.date > entryDate);
 
@@ -43,17 +69,17 @@ export function labelSignal(signal, bars, config) {
 
     // STOP is checked before TARGET: if both trade through on one day, assume the
     // stop hit first (the pessimistic assumption).
-    if (bar.low <= stop) {
+    if (bar.low <= stopAdj) {
       outcome = OUTCOME.STOP;
       hitStopFirst = true;
-      exitPrice = Math.min(stop, bar.open); // gap-through → worse of stop vs open
+      exitPrice = Math.min(stopAdj, bar.open); // gap-through → worse of stop vs open
       exitDate = bar.date;
       break;
     }
-    if (bar.high >= target) {
+    if (bar.high >= targetAdj) {
       outcome = OUTCOME.TARGET;
       hitTargetFirst = true;
-      exitPrice = target; // do not credit a gap above target
+      exitPrice = targetAdj; // do not credit a gap above target
       exitDate = bar.date;
       break;
     }
@@ -67,8 +93,9 @@ export function labelSignal(signal, bars, config) {
 
   if (!outcome) return null; // unresolved; not enough days have passed yet
 
-  // After-cost return, in percent. Costs apply on both entry and exit sides.
-  const grossPct = (exitPrice / entry - 1) * 100;
+  // After-cost return, in percent. Anchored to entryAdj so it is split-invariant
+  // (a ratio). Costs apply on both entry and exit sides.
+  const grossPct = (exitPrice / entryAdj - 1) * 100;
   const costPct = (2 * (feeBps + slippageBps)) / 100; // bps→% : /100; two sides : ×2
   const profitPct = round(grossPct - costPct, 4);
 
@@ -76,10 +103,11 @@ export function labelSignal(signal, bars, config) {
     outcome,
     hitStopFirst,
     hitTargetFirst,
-    exitPrice: round(exitPrice, 4),
+    exitPrice: round(exitPrice, 4), // in the current adjusted frame
     exitDate,
     daysHeld,
     profitPct,
+    ...audit,
   };
 }
 
