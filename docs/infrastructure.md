@@ -117,6 +117,34 @@ node scripts/seed.mjs --apply
 `scripts/seed.mjs` is dry-run by default, refuses to seed unless `alertMode` is
 `observe`, and is idempotent (Put overwrites the same keys).
 
+## Data feeds: keys, paths, and the Tiingo quota
+
+Key SSM **paths** are env-driven (`TIINGO_KEY_PATH`, `FINNHUB_KEY_PATH`, set from
+the `TiingoKeyPath` / `FinnhubKeyPath` template params), so a key can be moved
+without a code change. The scanner and labeler log the paths in use at startup
+(`gp_keypaths {...}`) — **paths only, never the secret values**.
+
+**Tiingo free-tier limit (important):** Tiingo free caps **unique symbols at
+500/month** (plus ~50 req/hour, ~1000/day). The Tiingo key currently defaults to
+the **shared** `/edge-hunter/tiingo/api_key`, so Edge Hunter's broad SEC/insider
+symbol coverage and our 43 names draw from the **same** monthly quota. When the
+combined unique-symbol count exceeds 500, Tiingo returns
+`You have run over your 500 symbol look up for this month` and our scans get
+`NO_DATA` for most names — which B7 coverage flags as degraded → pages.
+
+**Planned fix (tracked as a GitHub issue):** a DEDICATED Gerchik-Perchik Tiingo
+key. Cutover (no code change needed — path is env-driven):
+1. Obtain a separate Tiingo key; `aws ssm put-parameter --name
+   /gerchik/tiingo/api_key --type SecureString --value <key>`.
+2. Pin `TiingoKeyPath=/gerchik/tiingo/api_key` in `samconfig.toml`
+   `parameter_overrides` (this also re-scopes the scanner/labeler IAM to that ARN).
+3. Deploy. Verify via the `gp_keypaths` startup log and B7 coverage.
+
+Finnhub and Anthropic keys stay shared (`/edge-hunter/*`) per scope.
+
+> The opportunity/quality **backtest scripts refuse to run** when fewer than 90% of
+> watchlist symbols load (the quota case) — better no answer than a misleading one.
+
 ## Schedule / DST note
 
 EventBridge crons are UTC-only. The crons are fixed UTC but chosen so **both** US

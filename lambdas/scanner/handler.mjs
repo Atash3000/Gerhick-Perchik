@@ -17,7 +17,7 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, ScanCommand } from "@aws-sdk/lib-dynamodb";
 
 import { getActiveConfig } from "../shared/config.mjs";
-import { getMarketData } from "../shared/marketdata.mjs";
+import { getMarketData, KEY_PATHS } from "../shared/marketdata.mjs";
 import { getFundamentals } from "../shared/fundamentals.mjs";
 import { rsRaw, rsVsSpy, rankPercentiles } from "../shared/rs.mjs";
 import { score, DECISION } from "../shared/scoring.mjs";
@@ -101,6 +101,8 @@ async function getMarketRegime() {
 export async function handler(event) {
   const startedAt = new Date().toISOString();
   const startMs = Date.now();
+  // Startup config check: log which SSM key PATHS are in use (never the values).
+  console.log("gp_keypaths", JSON.stringify(KEY_PATHS));
 
   // Post-deploy SMOKE TEST: verify the handler LOADS and can reach its core
   // dependencies (config + watchlist reads) — without running a full scan,

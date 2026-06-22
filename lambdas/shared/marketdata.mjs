@@ -19,10 +19,15 @@
 import { getParameter } from "./ssm.mjs";
 import { finnhub } from "./ratelimit.mjs";
 
-const SSM_PATHS = {
-  tiingo: "/edge-hunter/tiingo/api_key",
-  finnhub: "/edge-hunter/finnhub/api_key",
+// SSM PATHS (never the values). Driven by env so the Tiingo key can be moved to a
+// DEDICATED Gerchik-Perchik key without a code change — see docs (Tiingo free tier
+// caps unique symbols at 500/month, and the Edge Hunter key is shared, which
+// starves us). Default keeps the current shared paths.
+export const KEY_PATHS = {
+  tiingo: process.env.TIINGO_KEY_PATH || "/edge-hunter/tiingo/api_key",
+  finnhub: process.env.FINNHUB_KEY_PATH || "/edge-hunter/finnhub/api_key",
 };
+const SSM_PATHS = KEY_PATHS;
 
 // Detection / indicator parameters (v1).
 export const PARAMS = {

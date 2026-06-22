@@ -12,7 +12,7 @@
 // orchestration only. No alerts.
 
 import { getActiveConfig } from "../shared/config.mjs";
-import { getDailyBars } from "../shared/marketdata.mjs";
+import { getDailyBars, KEY_PATHS } from "../shared/marketdata.mjs";
 import { labelSignal, spyBenchmark } from "../shared/labeling.mjs";
 import { createStore } from "../shared/store.mjs";
 import { STRATEGY_VERSION } from "../shared/version.mjs";
@@ -21,6 +21,7 @@ const round4 = (n) => (typeof n === "number" ? Math.round(n * 1e4) / 1e4 : null)
 
 export async function handler() {
   const startedAt = new Date().toISOString();
+  console.log("gp_keypaths", JSON.stringify(KEY_PATHS)); // paths only, never values
   const config = await getActiveConfig(process.env.CONFIG_TABLE);
   const store = createStore();
 
