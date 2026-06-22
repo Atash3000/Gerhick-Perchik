@@ -26,11 +26,13 @@ export async function handler() {
 
   // SPY benchmark bars (B6), fetched once per run, adjusted. Best-effort: if this
   // fails, outcomes still close with null benchmark fields rather than not at all.
+  // A benchmark fetch failure is NOT a labeling failure — use a non-alarming
+  // keyword (`gp_benchmark_failed`, not the `gp_scan_failed` alarm keyword).
   let spyBars = null;
   try {
     spyBars = await getDailyBars("SPY");
   } catch (e) {
-    console.error(`gp_scan_failed: SPY benchmark fetch: ${e.message}`);
+    console.warn(`gp_benchmark_failed: SPY benchmark fetch: ${e.message}`);
   }
 
   const open = await store.listOpenOutcomes();
