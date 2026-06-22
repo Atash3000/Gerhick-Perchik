@@ -45,7 +45,6 @@ decision = score >= buyScoreThreshold ? BUY_CANDIDATE : NO_SIGNAL
 | `news` | `newsLevel === "high"` | context |
 | `earnings` | `0 ≤ daysToEarnings ≤ 3` | marketdata |
 | `trend` | `close ≤ ma200` | marketdata |
-| `hasTarget` | no resistance above price | marketdata |
 | `validRisk` | `entry − stop ≤ 0` (bad ATR) | derived |
 | `targetAbovePrice` | `target ≤ entry` | derived |
 | `riskReward` | `R:R < minRiskReward` | derived |
@@ -54,14 +53,37 @@ decision = score >= buyScoreThreshold ? BUY_CANDIDATE : NO_SIGNAL
 ## Derivation — levels are never typed in
 
 ```
-entry  = close
-stop   = entry − atrStopMultiple · ATR     // atrStopMultiple from gp-config (v1: 1.5)
-target = nearestResistance.price           // a real level, not a guess
-R:R    = (target − entry) / (entry − stop)
+entry           = close
+stop            = entry − atrStopMultiple · ATR        // atrStopMultiple from gp-config (1.5)
+projectedTarget = entry + targetAtrMultiple · ATR      // ATR-projected FLOOR (k from gp-config, 3.0)
+target          = max(nearestResistance.price (if above entry), projectedTarget)
+R:R             = (target − entry) / (entry − stop)
 ```
 
 R:R is the **result** of entry/stop/target, so it can't be gamed by typing in a
 favourable number.
+
+### ATR-projected target floor (PROVISIONAL — caps winners by design)
+
+The target is the **higher** of the nearest overhead resistance and an ATR-projected
+floor. `result.targetType` records which won: `RESISTANCE` (real level, far enough
+above), `RESISTANCE_FLOORED_BY_PROJECTED_ATR` (real level closer than the floor → floor
+wins), or `PROJECTED_ATR` (no resistance above entry, e.g. an all-time-high breakout).
+
+This replaced the old rule (`target = nearestResistance.price`, reject if none), which
+discarded the strongest names before scoring — ATH breakouts had no level to anchor to,
+and names pressing into a nearby level got garbage ~0%-distance targets (R:R ≈ 0). **It
+is a provisional unblock to get real candidates flowing into `gp-outcomes`; it caps
+winners by design and is intended to be replaced by the trailing-exit engine once we
+have outcomes to validate against.**
+
+**The k-invariant (do NOT break):** `targetAtrMultiple` (k) is **not** arbitrary — it
+equals `atrStopMultiple · minRiskReward` (1.5·2 = **3.0**), the minimum that lets a
+projected target clear the R:R gate (a projected target gives `R:R = k / atrStopMultiple`,
+= 2.0 at k=3.0, exactly `minRiskReward`). Set k **below** that product and breakouts get
+re-rejected at the R:R gate (the bug returns); **above** it and targets are over-extended.
+If you change `atrStopMultiple` or `minRiskReward`, **change k too**. When `targetAtrMultiple`
+is absent from config the code falls back to the derived invariant (not a magic constant).
 
 ## Score — 0–100 with breakdown
 
@@ -97,6 +119,10 @@ favourable number.
                                //   rsRank, growthQuality, sectorStrength } or null
                                // — always sums to `score`.
   entry, stop, target, riskReward,
+  targetType,                  // RESISTANCE | PROJECTED_ATR | RESISTANCE_FLOORED_BY_PROJECTED_ATR
+  projectedTarget,             // entry + targetAtrMultiple·ATR (the floor)
+  resistanceTarget,            // raw nearestResistance.price, or null if none above entry
+  targetAtrMultiple,           // the k actually used (config, or derived invariant fallback)
   gates                        // { gateName: boolean, … } or null on NO_DATA
 }
 ```

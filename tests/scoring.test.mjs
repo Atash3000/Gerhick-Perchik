@@ -11,6 +11,9 @@ const CONFIG = {
   buyScoreThreshold: 53,
   atrStopMultiple: 1.5,
   minRiskReward: 2.0,
+  // k-invariant: targetAtrMultiple === atrStopMultiple * minRiskReward (1.5*2=3.0),
+  // the minimum that lets a projected target clear the R:R gate. See scoring.mjs.
+  targetAtrMultiple: 3.0,
   maxCorrelatedPositions: 3,
   alertMode: "observe",
   feeBps: 10,
@@ -150,9 +153,12 @@ test("derived R:R is the result of entry/stop/target, computed correctly", () =>
   const md = baseMarketData();
   md.nearestResistance = { price: 106, touches: 2, strength: 0.5, brokenSupport: false };
   const r = score(md, CONFIG, cleanContext);
-  // stop=97, risk=3, target=106 → R:R = 6/3 = 2.0 (exactly at the minimum).
+  // close=100, atr=2, k=3 → projected floor = 106. Resistance (106) == floor, so the
+  // real resistance is used. stop=97, risk=3, target=106 → R:R = 6/3 = 2.0.
+  assert.equal(r.target, 106);
   assert.equal(r.riskReward, 2.0);
   assert.equal(r.gates.riskReward, true);
+  assert.equal(r.targetType, "RESISTANCE");
 });
 
 test("GATE: price not above 200MA → NO_SIGNAL, no score", () => {
@@ -165,12 +171,17 @@ test("GATE: price not above 200MA → NO_SIGNAL, no score", () => {
   assert.match(r.reason, /200MA/);
 });
 
-test("GATE: R:R below minimum → NO_SIGNAL", () => {
+test("GATE: R:R still rejects when the k-invariant is BROKEN (k below atrStop*minRR)", () => {
+  // The R:R gate is structurally unreachable under the invariant (k=3.0 floors
+  // every target to R:R=2.0). It MUST still fire if a human breaks the invariant by
+  // setting targetAtrMultiple below atrStopMultiple*minRiskReward. Here k=1.0 with no
+  // resistance → projected target = entry + 1*ATR → R:R = 1.0/1.5 = 0.667 < 2.
   const md = baseMarketData();
-  md.nearestResistance = { price: 104, touches: 2, strength: 0.5, brokenSupport: false };
-  const r = score(md, CONFIG, cleanContext); // R:R = 4/3 = 1.333 < 2
+  md.nearestResistance = null; // ATH-style; only the projected (under-floored) target
+  const r = score(md, { ...CONFIG, targetAtrMultiple: 1.0 }, cleanContext);
   assert.equal(r.decision, DECISION.NO_SIGNAL);
   assert.equal(r.gates.riskReward, false);
+  assert.equal(r.riskReward, 0.667); // (entry+1*atr - entry) / (1.5*atr) = 1/1.5
   assert.match(r.reason, /R:R/);
 });
 
@@ -203,13 +214,65 @@ test("GATE: HIGH news → NO_SIGNAL", () => {
   assert.equal(r.gates.news, false);
 });
 
-test("GATE: no resistance above price → NO_SIGNAL (no tradeable target)", () => {
+// --- Target derivation (ATR-projected floor; gp-2.x provisional funnel unblock) ---
+
+test("TARGET: no resistance above (ATH breakout) → projected target, R:R 2.0, NOT rejected", () => {
+  // The old behavior rejected this outright ("no resistance above price"). The fix
+  // projects a target so a clean breakout becomes a tradeable candidate.
+  const md = baseMarketData();
+  md.nearestResistance = null; // price above every detected level
+  const r = score(md, CONFIG, cleanContext);
+  // close=100, atr=2, k=3 → projected = 100 + 3*2 = 106. stop=97, risk=3 → R:R=2.0.
+  assert.notEqual(r.decision, DECISION.NO_SIGNAL);
+  assert.equal(r.target, 106);
+  assert.equal(r.riskReward, 2.0);
+  assert.equal(r.gates.riskReward, true);
+  assert.equal(r.targetType, "PROJECTED_ATR");
+  assert.equal(r.projectedTarget, 106);
+  assert.equal(r.resistanceTarget, null);
+  assert.equal(r.targetAtrMultiple, 3.0);
+});
+
+test("TARGET: resistance CLOSER than 3*ATR → floor overrides the real level (boundary)", () => {
+  // Critical boundary: a genuine chart level sits just above entry, closer than the
+  // projected floor. The floor silently overrides it. We are OK with this — it is
+  // exactly the garbage-target (KO +18c, WMT +7c) class being eliminated.
+  const md = baseMarketData();
+  md.nearestResistance = { price: 104, touches: 2, strength: 0.5, brokenSupport: false };
+  const r = score(md, CONFIG, cleanContext);
+  // projected floor = 106 > resistance 104 → target floored to 106.
+  assert.notEqual(r.decision, DECISION.NO_SIGNAL);
+  assert.equal(r.target, 106);
+  assert.equal(r.riskReward, 2.0); // 6/3, not the broken 4/3=1.333 that used to reject
+  assert.equal(r.gates.riskReward, true);
+  assert.equal(r.targetType, "RESISTANCE_FLOORED_BY_PROJECTED_ATR");
+  assert.equal(r.projectedTarget, 106);
+  assert.equal(r.resistanceTarget, 104); // raw level preserved for analysis
+});
+
+test("TARGET: resistance comfortably above the floor → real resistance used (regression)", () => {
+  // Normal mid-range setup: resistance is > 3*ATR above entry, so it wins. This is
+  // unchanged from the original behavior.
+  const md = baseMarketData(); // nearestResistance.price = 110, floor = 106
+  const r = score(md, CONFIG, cleanContext);
+  assert.equal(r.target, 110);
+  assert.equal(r.riskReward, 3.333); // 10/3 — unchanged
+  assert.equal(r.targetType, "RESISTANCE");
+  assert.equal(r.projectedTarget, 106);
+  assert.equal(r.resistanceTarget, 110);
+});
+
+test("TARGET: missing targetAtrMultiple falls back to the invariant atrStop*minRR", () => {
+  // No magic constant: when the knob is absent, k = atrStopMultiple * minRiskReward
+  // (1.5*2=3.0), the documented invariant. A no-resistance name still floors to R:R 2.0.
+  const { targetAtrMultiple, ...configNoK } = CONFIG;
   const md = baseMarketData();
   md.nearestResistance = null;
-  const r = score(md, CONFIG, cleanContext);
-  assert.equal(r.decision, DECISION.NO_SIGNAL);
-  assert.equal(r.gates.hasTarget, false);
-  assert.match(r.reason, /resistance/);
+  const r = score(md, configNoK, cleanContext);
+  assert.equal(r.targetAtrMultiple, 3.0);
+  assert.equal(r.target, 106);
+  assert.equal(r.riskReward, 2.0);
+  assert.equal(r.targetType, "PROJECTED_ATR");
 });
 
 test("gates pass but score below threshold → NO_SIGNAL but score is still returned", () => {
