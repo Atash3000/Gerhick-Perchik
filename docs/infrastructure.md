@@ -37,9 +37,12 @@ labeler later):
   same-day re-run overwrites rather than duplicates). Stores the full result:
   `decision`, `score`, `breakdown`, `entry`/`stop`/`target`/`riskReward`, `gates`,
   `reason`, `sector`, plus `strategyVersion` and `dataAsOf`, plus a `metrics` block
-  (raw inputs: `rsi`, `atr`, `volumeRatio`, level prices, `daysToEarnings`) for
-  Phase 8 analysis. Every decision is snapshotted — including `NO_SIGNAL`, gate
-  rejections, and `NO_DATA`.
+  (raw inputs: `rsi`, `atr`, `volumeRatio`, level prices, `daysToEarnings`,
+  Minervini `ma150`/`ma200SlopePct`, Turtle `high20d`/`high55d`, RS returns
+  `return21/63/126/252d`) and a `fundamentals` block (O'Neil capture:
+  `epsGrowthQtr`, `salesGrowthQtr`, `annualEpsGrowth`, `grossMarginTTM`, `roeTTM`,
+  `debtToEquity`) — all **captured, not scored** — for Phase 8 analysis. Every
+  decision is snapshotted — including `NO_SIGNAL`, gate rejections, and `NO_DATA`.
 - **`gp-outcomes`** — one row per `BUY_CANDIDATE`, opened with `status: "OPEN"`.
   `pk = SIGNAL#<ticker>#<entryDate>`, `sk = epochMs(entryDate)`. Written with a
   `attribute_not_exists(pk)` condition so a re-run never re-opens or clobbers an

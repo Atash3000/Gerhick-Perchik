@@ -379,6 +379,17 @@ export function pctChange(bars) {
   return round((last / prev - 1) * 100, 2);
 }
 
+// Price return over the last `n` bars, % (pure). Raw relative-strength input —
+// the percentile RS RANK across the universe is computed at analysis time, not
+// here (it needs all tickers). null when history is short.
+export function returnPct(bars, n) {
+  if (bars.length < n + 1) return null;
+  const last = bars[bars.length - 1].close;
+  const past = bars[bars.length - 1 - n].close;
+  if (!(past > 0)) return null;
+  return round((last / past - 1) * 100, 2);
+}
+
 // 52-week high/low from the last ~252 trading bars (pure).
 export function range52w(bars) {
   const w = bars.slice(-252);
@@ -440,6 +451,12 @@ export async function getMarketData(ticker, opts = {}) {
 
   const { low52, high52 } = range52w(bars);
   const changePct = pctChange(bars);
+  // Raw relative-strength inputs (1/3/6/12-month price returns) — captured for
+  // later RS-rank analysis; not scored.
+  const return21d = returnPct(bars, 21);
+  const return63d = returnPct(bars, 63);
+  const return126d = returnPct(bars, 126);
+  const return252d = returnPct(bars, 252);
 
   const finnhubKey = await getParameter(SSM_PATHS.finnhub);
   const [daysToEarnings, profile] = await Promise.all([
@@ -462,6 +479,7 @@ export async function getMarketData(ticker, opts = {}) {
     ma200SlopePct, // >0 means the 200MA is rising (Minervini)
     high20d: high20d == null ? null : round(high20d, 2), // Turtle 20-day breakout level
     high55d: high55d == null ? null : round(high55d, 2), // Turtle 55-day breakout level
+    return21d, return63d, return126d, return252d, // raw RS inputs (not scored)
     atr: round(atr, 2),
     rsi: round(rsi, 2),
     volume: Math.round(last.volume),

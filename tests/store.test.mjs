@@ -96,6 +96,26 @@ test("writeSnapshot derives v2 capture booleans (Minervini/Turtle) when inputs p
   assert.equal(metrics.breakout55, false); // 113 < 114
 });
 
+test("writeSnapshot records fundamentals + RS returns (capture-only)", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });
+  const md = { close: 100, return63d: 5.5, return126d: 12.1, return252d: 30 };
+  const fundamentals = { epsGrowthQtr: 23.3, salesGrowthQtr: 18, roeTTM: 33 };
+  await store.writeSnapshot(buyResult, { asOf: "2026-06-18", marketData: md, fundamentals });
+  const { Item } = client.calls[0];
+  assert.equal(Item.fundamentals.epsGrowthQtr, 23.3);
+  assert.equal(Item.fundamentals.roeTTM, 33);
+  assert.equal(Item.metrics.return126d, 12.1);
+  assert.equal(Item.metrics.return252d, 30);
+});
+
+test("writeSnapshot fundamentals defaults to null when not provided", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });
+  await store.writeSnapshot(buyResult, { asOf: "2026-06-18", marketData: { close: 100 } });
+  assert.equal(client.calls[0].Item.fundamentals, null);
+});
+
 test("writeSnapshot v2 booleans are null when MAs/levels are unavailable", async () => {
   const client = fakeClient();
   const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });

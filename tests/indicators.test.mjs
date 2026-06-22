@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   sma, atrWilder, rsiWilder, computeLevels,
   isTradingDay, mostRecentTradingDay, pctChange, range52w,
-  smaLagged, maSlopePct, priorHighN,
+  smaLagged, maSlopePct, priorHighN, returnPct,
 } from "../lambdas/shared/marketdata.mjs";
 
 test("sma averages the last `period` values", () => {
@@ -89,6 +89,13 @@ test("priorHighN returns the highest high of the N bars before the last", () => 
   ];
   assert.equal(priorHighN(bars, 3), 12);
   assert.equal(priorHighN([{ high: 1 }], 3), null); // not enough history
+});
+
+test("returnPct computes price return over n bars, null when short", () => {
+  const bars = [{ close: 100 }, { close: 110 }, { close: 121 }];
+  assert.equal(returnPct(bars, 2), 21); // 121 vs 100
+  assert.equal(returnPct(bars, 1), 10); // 121 vs 110
+  assert.equal(returnPct(bars, 5), null);
 });
 
 test("range52w returns min low / max high over the window", () => {

@@ -22,6 +22,7 @@ import { DynamoDBDocumentClient, ScanCommand } from "@aws-sdk/lib-dynamodb";
 
 import { getActiveConfig } from "../shared/config.mjs";
 import { getMarketData } from "../shared/marketdata.mjs";
+import { getFundamentals } from "../shared/fundamentals.mjs";
 import { score, DECISION } from "../shared/scoring.mjs";
 import { createStore } from "../shared/store.mjs";
 import { buildPayload, narrate, composeRichMessage, FALLBACK_NARRATION } from "../shared/narration.mjs";
@@ -129,7 +130,12 @@ export async function handler() {
       // BUY_CANDIDATE (idempotent). A write failure for one name is logged and
       // skipped — it must not sink the scan. Still NO alerts (that's Phase 6).
       try {
-        await store.writeSnapshot(result, { asOf: regime.asOf, sector: entry.sector, marketData: md });
+        // Capture-only O'Neil fundamentals (best-effort; never sinks a scan,
+        // not scored). Recorded on the snapshot for later Phase-8 analysis.
+        const fundamentals = await getFundamentals(entry.ticker);
+        await store.writeSnapshot(result, {
+          asOf: regime.asOf, sector: entry.sector, marketData: md, fundamentals,
+        });
         snapshotsWritten += 1;
         if (result.decision === DECISION.BUY_CANDIDATE) {
           const opened = await store.openOutcome(result, { sector: entry.sector });
