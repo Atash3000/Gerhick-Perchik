@@ -81,6 +81,25 @@ test("writeSnapshot records raw metrics from marketData for tuning", async () =>
   assert.equal(Item.metrics.daysToEarnings, 20);
 });
 
+test("writeSnapshot rounds full-precision indicator fields for persistence", async () => {
+  // marketData now carries FULL-PRECISION decision fields (scoring sees them raw);
+  // snapshotMetrics is the persistence boundary that rounds for clean storage.
+  const client = fakeClient();
+  const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });
+  const md = {
+    rsi: 57.83456, ma50: 95.111, ma150: 92.005, ma200: 90.126, atr: 2.19899,
+    volume: 1_500_000, avgVolume30: 1_000_000,
+    nearestSupport: { price: 98 }, nearestResistance: { price: 110 },
+  };
+  await store.writeSnapshot(buyResult, { asOf: "2026-06-18", marketData: md });
+  const { Item } = client.calls[0];
+  assert.equal(Item.metrics.rsi, 57.83);
+  assert.equal(Item.metrics.ma50, 95.11);
+  assert.equal(Item.metrics.ma150, 92.01);
+  assert.equal(Item.metrics.ma200, 90.13);
+  assert.equal(Item.metrics.atr, 2.2);
+});
+
 test("writeSnapshot derives v2 capture booleans (Minervini/Turtle) when inputs present", async () => {
   const client = fakeClient();
   const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });

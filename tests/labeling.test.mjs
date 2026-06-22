@@ -50,6 +50,17 @@ test("same day both hit → STOP wins (pessimistic)", () => {
   assert.equal(r.exitPrice, 97); // min(97, open 100)
 });
 
+test("gap-open ABOVE target then same-day dip to stop → TARGET (resting sell fills at the open)", () => {
+  // Open 112 is above target 110: a resting target sell fills at the open before
+  // any intraday move, so this is a TARGET, not a STOP — even though the same bar
+  // later trades down through the stop. Exit at target (no favorable-gap credit).
+  const bars = [b("2026-06-19", 112, 113, 96, 100)]; // open>target AND low<stop
+  const r = labelSignal(SIGNAL, bars, CONFIG);
+  assert.equal(r.outcome, OUTCOME.TARGET);
+  assert.equal(r.hitTargetFirst, true);
+  assert.equal(r.exitPrice, 110); // target, not the 112 gap-open
+});
+
 test("TIMEOUT: no touch within window → exit at the timeout day's close", () => {
   const bars = [
     b("2026-06-19", 100, 105, 99, 101),

@@ -20,8 +20,10 @@ export function rsRaw(md) {
 // Relative strength vs SPY over the 126d window (the name's return minus SPY's).
 // null if either is unavailable.
 export function rsVsSpy(md, spyReturn126d) {
-  if (typeof md?.return126d !== "number" || typeof spyReturn126d !== "number") return null;
-  return round(md.return126d - spyReturn126d, 2);
+  const a = md?.return126d;
+  if (typeof a !== "number" || !Number.isFinite(a)) return null;
+  if (typeof spyReturn126d !== "number" || !Number.isFinite(spyReturn126d)) return null;
+  return round(a - spyReturn126d, 2);
 }
 
 // Percentile-rank a set of {key, value} pairs into 1-99. Items with a null/non-

@@ -273,6 +273,19 @@ test("NO_DATA: non-positive ATR → NO_DATA", () => {
   assert.match(r.reason, /non-positive atr/);
 });
 
+test("NO_DATA: out-of-range config tunables are rejected with a clear reason", () => {
+  for (const [k, v] of [
+    ["atrStopMultiple", 0],
+    ["minRiskReward", -1],
+    ["maxCorrelatedPositions", -1],
+    ["buyScoreThreshold", 250],
+  ]) {
+    const r = score(baseMarketData(), { ...CONFIG, [k]: v }, cleanContext);
+    assert.equal(r.decision, DECISION.NO_DATA, `${k}=${v} should be NO_DATA`);
+    assert.match(r.reason, new RegExp(k));
+  }
+});
+
 test("position sizing computed when account tunables are present", () => {
   const cfg = { ...CONFIG, accountSize: 10000, riskPctPerTrade: 1 };
   const r = score(baseMarketData(), cfg, cleanContext);

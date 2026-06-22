@@ -47,7 +47,7 @@ export function buildPayload(result, marketData, mode) {
     target: result.target,
     riskReward: result.riskReward,
     sector: marketData?.sector ?? null,
-    rsi: marketData?.rsi ?? null,
+    rsi: num2(marketData?.rsi ?? null),
     dataAsOf: result.dataAsOf,
     strategyVersion: result.strategyVersion,
   };
@@ -116,6 +116,11 @@ function money(n) {
   return typeof n === "number" ? n.toFixed(2) : String(n);
 }
 
+// Round a non-$ number for display (marketData carries full precision now).
+function num2(n) {
+  return typeof n === "number" && Number.isFinite(n) ? Math.round(n * 100) / 100 : n;
+}
+
 function signedPct(a, b) {
   if (!(b > 0) || typeof a !== "number") return "n/a";
   const p = (a / b - 1) * 100;
@@ -148,8 +153,8 @@ export function buildBullets(result, md, config) {
     }
   }
   if (r != null && r >= 1) bullish.push(`Volume ${r.toFixed(1)}× the 30-day average`);
-  if (md.rsi >= 50 && md.rsi <= 65) bullish.push(`RSI ${md.rsi} — healthy momentum`);
-  else if (md.rsi >= 40 && md.rsi <= 70) bullish.push(`RSI ${md.rsi} — constructive`);
+  if (md.rsi >= 50 && md.rsi <= 65) bullish.push(`RSI ${num2(md.rsi)} — healthy momentum`);
+  else if (md.rsi >= 40 && md.rsi <= 70) bullish.push(`RSI ${num2(md.rsi)} — constructive`);
 
   if (result.riskReward < config.minRiskReward * 1.5) {
     risks.push(`Reward room moderate (R:R ${result.riskReward})`);
@@ -157,7 +162,7 @@ export function buildBullets(result, md, config) {
   if (typeof md.daysToEarnings === "number" && md.daysToEarnings <= 15) {
     risks.push(`Earnings in ${md.daysToEarnings} days`);
   }
-  if (md.rsi > 70) risks.push(`RSI ${md.rsi} — extended/overbought`);
+  if (md.rsi > 70) risks.push(`RSI ${num2(md.rsi)} — extended/overbought`);
   if (!md.nearestSupport) risks.push("No nearby support below price — stop relies on ATR only");
   risks.push("ATR-based stop; an overnight gap can fill worse than planned");
 
@@ -195,7 +200,7 @@ export function composeRichMessage(result, md, config, mode, narration) {
 
   lines.push("", "📈 Technicals:");
   lines.push("Trend: above 50MA & 200MA ✓");
-  lines.push(`RSI(14): ${m.rsi}`);
+  lines.push(`RSI(14): ${num2(m.rsi)}`);
   if (m.nearestSupport) lines.push(`Support: $${money(m.nearestSupport.price)} (${m.nearestSupport.touches} touches)`);
   lines.push(`Resistance: $${money(result.target)} (target)`);
   lines.push(`ATR(14): $${money(m.atr)} • Vol: ${volR}× avg`);

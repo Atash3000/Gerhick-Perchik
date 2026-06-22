@@ -116,6 +116,15 @@ export function score(marketData, config, marketContext = {}) {
       return noData(marketData, `missing/invalid config: ${k}`);
     }
   }
+  // Range-sanity the tunables: a finite-but-nonsensical value (e.g. a negative
+  // minRiskReward that makes the R:R gate trivially pass, or a 250 threshold no
+  // score can reach) must not silently distort decisions. Score is 0..100.
+  if (!(config.atrStopMultiple > 0)) return noData(marketData, "config out of range: atrStopMultiple must be > 0");
+  if (!(config.minRiskReward > 0)) return noData(marketData, "config out of range: minRiskReward must be > 0");
+  if (!(config.maxCorrelatedPositions >= 0)) return noData(marketData, "config out of range: maxCorrelatedPositions must be >= 0");
+  if (!(config.buyScoreThreshold >= 0 && config.buyScoreThreshold <= 100)) {
+    return noData(marketData, "config out of range: buyScoreThreshold must be within 0..100");
+  }
 
   const {
     close, ma50, ma200, atr, rsi, volume, avgVolume30,

@@ -60,7 +60,15 @@ const MARKET_HOLIDAYS = new Set([
   // 2026
   "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25",
   "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25",
+  // 2027 (NYSE: New Year observed 2027-01-01; MLK; Washington; Good Friday;
+  // Memorial; Juneteenth observed 06-18; Independence observed 07-05; Labor;
+  // Thanksgiving; Christmas observed 12-24).
+  "2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31",
+  "2027-06-18", "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24",
 ]);
+// NOTE: this static set must be extended each year (or replaced with an exchange
+// calendar source) — the freshness gate will mis-classify holidays past the last
+// listed year. Tracked as a known limitation.
 
 function isWeekend(dateStr) {
   // Use noon UTC to get an unambiguous weekday for a calendar date.
@@ -168,7 +176,9 @@ export function rsiWilder(closes, period = 14) {
     avgGain = (avgGain * (period - 1) + g) / period;
     avgLoss = (avgLoss * (period - 1) + l) / period;
   }
-  if (avgLoss === 0) return 100;
+  // A dead-flat series has no gains AND no losses → neutral, not overbought.
+  if (avgGain === 0 && avgLoss === 0) return 50;
+  if (avgLoss === 0) return 100; // only gains → genuinely overbought
   const rs = avgGain / avgLoss;
   return 100 - 100 / (1 + rs);
 }
@@ -475,20 +485,25 @@ export async function getMarketData(ticker, opts = {}) {
     ticker,
     name: profile.name,
     marketCapMillions: profile.marketCapMillions,
-    close: round(last.close, 2),
+    // Decision-relevant fields are kept at FULL PRECISION so scoring derives
+    // stop/R:R and evaluates the close>200MA / R:R / RSI-band / ATR-stop gates on
+    // exact numbers. Rounding happens only at the persistence boundary
+    // (store.snapshotMetrics) and the display boundary (narration) — never before
+    // the decision. Display-only fields (low52/high52/high20d/55d) stay rounded.
+    close: last.close,
     pctChange: changePct,
     low52,
     high52,
-    ma50: round(ma50, 2),
-    ma150: ma150 == null ? null : round(ma150, 2),
-    ma200: round(ma200, 2),
+    ma50,
+    ma150,
+    ma200,
     // v2 (captured, not yet scored — for Phase 8 analysis):
     ma200SlopePct, // >0 means the 200MA is rising (Minervini)
     high20d: high20d == null ? null : round(high20d, 2), // Turtle 20-day breakout level
     high55d: high55d == null ? null : round(high55d, 2), // Turtle 55-day breakout level
     return21d, return63d, return126d, return252d, // raw RS inputs (not scored)
-    atr: round(atr, 2),
-    rsi: round(rsi, 2),
+    atr,
+    rsi,
     volume: Math.round(last.volume),
     avgVolume30: Math.round(avgVolume30),
     nearestSupport,

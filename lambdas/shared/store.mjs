@@ -36,6 +36,9 @@ export function epochMs(dateStr) {
 // tuning/backtest analysis. Tolerates a partial/NO_DATA marketData object.
 export function snapshotMetrics(md) {
   const m = md ?? {};
+  // marketData now carries full-precision decision fields; round here, at the
+  // persistence boundary, so stored snapshots stay clean (display-only rounding).
+  const r2 = (v) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v * 100) / 100 : v ?? null);
   const volumeRatio =
     typeof m.volume === "number" && m.avgVolume30 > 0
       ? Math.round((m.volume / m.avgVolume30) * 100) / 100
@@ -53,12 +56,12 @@ export function snapshotMetrics(md) {
     typeof m.high55d === "number" && typeof m.close === "number" ? m.close > m.high55d : null;
 
   return {
-    rsi: m.rsi ?? null,
-    ma50: m.ma50 ?? null,
-    ma150: m.ma150 ?? null,
-    ma200: m.ma200 ?? null,
+    rsi: r2(m.rsi),
+    ma50: r2(m.ma50),
+    ma150: r2(m.ma150),
+    ma200: r2(m.ma200),
     ma200SlopePct: m.ma200SlopePct ?? null,
-    atr: m.atr ?? null,
+    atr: r2(m.atr),
     volume: m.volume ?? null,
     avgVolume30: m.avgVolume30 ?? null,
     volumeRatio,

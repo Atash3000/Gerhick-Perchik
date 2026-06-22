@@ -29,6 +29,13 @@ test("rsiWilder sits mid-range for an alternating series", () => {
   assert.ok(r > 0 && r < 100);
 });
 
+test("rsiWilder returns neutral 50 for a flat series (no gains AND no losses)", () => {
+  // A dead-flat series has avgGain === 0 && avgLoss === 0 — that is neutral, not
+  // overbought. Returning 100 here would wrongly zero the momentum sub-score.
+  const closes = Array.from({ length: 30 }, () => 100);
+  assert.equal(rsiWilder(closes, 14), 50);
+});
+
 test("computeLevels finds clustered support below and resistance above price", () => {
   // Triangular wave 90↔110 (period 8): clean pivot highs at 110, lows at 90.
   const wave = [];
