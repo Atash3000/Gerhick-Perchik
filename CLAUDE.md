@@ -136,9 +136,17 @@ key (that silently overwrites — do not repeat that class of bug).
   gate → no signal, full stop.
 - **Derive levels — never type them in:** `stop = entry − atrStopMultiple×ATR`,
   `target = nearest resistance`. R:R is the _result_, so it can't be gamed.
-- **Score 0–100:** empiricalEdge 30 (neutral 15 until outcomes fill it), trend 20,
-  setup 20, momentum 15, volume 10, news 5. Always return the per-component
-  **breakdown**.
+- **Score 0–100 (gp-2.0.0):** empiricalEdge 15 (neutral 7.5 until outcomes fill it;
+  ceiling 92.5), setup 20, trend 15, momentum 10, volume 8, news 2, rsRank 12,
+  growthQuality 13, sectorStrength 5. RS/fundamentals/sector are gradient
+  components, never gates; missing data is neutral 0, never a rejection. Always
+  return the per-component **breakdown** (all nine keys).
+- **`buyScoreThreshold` 60 → 53 (gp-2.0.0, PROVISIONAL mechanical re-center):** a
+  structural adjustment for empiricalEdge moving 15→7.5 (a flat −7.5/name), NOT
+  outcome tuning and NOT validated. Derived against ZERO actual candidates — the
+  only scan day on record had all 43 names gate-rejected. Phase B MUST recalibrate
+  it against real gp-2.0.0 candidates across varied market days. Both 60 and 53 are
+  guesses.
 - Validate inputs; on missing/bad data return a no-signal result, never score
   garbage. `buyScoreThreshold` is PROVISIONAL until backed by data.
 

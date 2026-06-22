@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { rsRaw, rsVsSpy, rankPercentiles } from "../lambdas/shared/rs.mjs";
+import { rsRaw, rsVsSpy, rankPercentiles, sectorStrengthPercentiles } from "../lambdas/shared/rs.mjs";
 
 test("rsRaw = 2*return63d + return126d + return252d", () => {
   assert.equal(rsRaw({ return63d: 10, return126d: 20, return252d: 30 }), 70); // 20+20+30
@@ -49,4 +49,59 @@ test("rankPercentiles excludes null values (they get rank null)", () => {
 test("rankPercentiles handles all-null / empty", () => {
   assert.equal(rankPercentiles([{ key: "A", value: null }]).get("A"), null);
   assert.equal(rankPercentiles([]).size, 0);
+});
+
+// --- sectorStrengthPercentiles (gp-2.0.0 sectorStrength input) -------------------
+
+test("sectorStrengthPercentiles ranks sectors by mean rsRaw, strongest highest", () => {
+  const m = sectorStrengthPercentiles([
+    { sector: "Tech", rsRaw: 90 },
+    { sector: "Tech", rsRaw: 70 },
+    { sector: "Tech", rsRaw: 80 }, // mean 80
+    { sector: "Energy", rsRaw: 10 },
+    { sector: "Energy", rsRaw: 20 },
+    { sector: "Energy", rsRaw: 0 }, // mean 10
+  ]);
+  assert.ok(m.get("Tech") > m.get("Energy"));
+  for (const s of ["Tech", "Energy"]) assert.ok(m.get(s) >= 1 && m.get(s) <= 99);
+});
+
+test("sectorStrengthPercentiles excludes undersized sectors (<3 names) → not in map", () => {
+  const m = sectorStrengthPercentiles([
+    { sector: "Tech", rsRaw: 90 },
+    { sector: "Tech", rsRaw: 70 },
+    { sector: "Tech", rsRaw: 80 },
+    { sector: "Materials", rsRaw: 99 }, // only 1 name → undersized
+    { sector: "Comm", rsRaw: 50 },
+    { sector: "Comm", rsRaw: 60 }, // only 2 names → undersized
+  ]);
+  assert.ok(typeof m.get("Tech") === "number"); // qualifies (3)
+  assert.equal(m.get("Materials"), undefined); // absent → caller treats as neutral 0
+  assert.equal(m.get("Comm"), undefined);
+});
+
+test("sectorStrengthPercentiles ignores null-sector and non-numeric rsRaw items", () => {
+  const m = sectorStrengthPercentiles([
+    { sector: null, rsRaw: 90 },
+    { sector: "Tech", rsRaw: 90 },
+    { sector: "Tech", rsRaw: null },
+    { sector: "Tech", rsRaw: 80 },
+    { sector: "Tech", rsRaw: 70 }, // 3 valid Tech rsRaw → qualifies
+  ]);
+  assert.ok(typeof m.get("Tech") === "number");
+  assert.equal(m.size, 1); // only Tech; null-sector item dropped
+});
+
+test("sectorStrengthPercentiles with a custom minNames", () => {
+  const m = sectorStrengthPercentiles(
+    [
+      { sector: "Tech", rsRaw: 90 },
+      { sector: "Tech", rsRaw: 80 },
+      { sector: "Energy", rsRaw: 10 },
+      { sector: "Energy", rsRaw: 20 },
+    ],
+    2
+  );
+  assert.ok(typeof m.get("Tech") === "number");
+  assert.ok(typeof m.get("Energy") === "number");
 });

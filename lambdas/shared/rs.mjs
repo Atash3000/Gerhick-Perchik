@@ -41,3 +41,24 @@ export function rankPercentiles(pairs) {
   }
   return out;
 }
+
+// Cross-sectional sector strength (gp-2.0.0 sectorStrength input): mean rsRaw per
+// sector, then percentile-rank the sectors into 1-99. Sectors with fewer than
+// `minNames` ranked names are excluded (too few to be a real signal) and absent
+// from the returned map → the caller treats a missing lookup as neutral 0.
+// `items`: [{ sector, rsRaw }]. Returns Map sector -> percentile. Pure.
+export function sectorStrengthPercentiles(items, minNames = 3) {
+  const bySector = new Map();
+  for (const it of items) {
+    if (!it || it.sector == null) continue;
+    if (typeof it.rsRaw !== "number" || !Number.isFinite(it.rsRaw)) continue;
+    if (!bySector.has(it.sector)) bySector.set(it.sector, []);
+    bySector.get(it.sector).push(it.rsRaw);
+  }
+  const pairs = [];
+  for (const [sector, vals] of bySector) {
+    if (vals.length < minNames) continue; // not meaningful — leave out (→ null on lookup)
+    pairs.push({ key: sector, value: vals.reduce((a, b) => a + b, 0) / vals.length });
+  }
+  return rankPercentiles(pairs);
+}

@@ -1,7 +1,7 @@
 {
   "pk": "CONFIG",
   "sk": "ACTIVE",
-  "buyScoreThreshold": 60,
+  "buyScoreThreshold": 53,
   "atrStopMultiple": 1.5,
   "minRiskReward": 2.0,
   "maxCorrelatedPositions": 3,
@@ -11,6 +11,6 @@
   "timeoutTradingDays": 60,
   "accountSize": 10000,
   "riskPctPerTrade": 1.0,
-  "strategyVersion": "gp-1.0.0",
-  "note": "PROVISIONAL tunables — thresholds/empiricalEdge are guesses until backed by gp-outcomes (Phase 8). alertMode MUST start as 'observe'; only a human flips it to 'live'."
+  "strategyVersion": "gp-2.0.0",
+  "note": "PROVISIONAL tunables — thresholds/empiricalEdge are guesses until backed by gp-outcomes (Phase 8). buyScoreThreshold 53 is a PROVISIONAL mechanical re-center for the gp-2.0.0 empiricalEdge 15→7.5 shift (a flat -7.5/name), NOT outcome tuning and calibrated against ZERO candidates; Phase B must revisit it against real gp-2.0.0 candidates. alertMode MUST start as 'observe'; only a human flips it to 'live'."
 }
