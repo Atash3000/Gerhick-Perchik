@@ -17,6 +17,7 @@
 //     historical levels or indicator math.
 
 import { getParameter } from "./ssm.mjs";
+import { finnhub } from "./ratelimit.mjs";
 
 const SSM_PATHS = {
   tiingo: "/edge-hunter/tiingo/api_key",
@@ -339,7 +340,7 @@ async function fetchDaysToEarnings(ticker, token, now = new Date()) {
   const url =
     `https://finnhub.io/api/v1/calendar/earnings` +
     `?from=${from}&to=${to}&symbol=${encodeURIComponent(ticker)}&token=${token}`;
-  const data = await fetchJson(url, "Finnhub earnings");
+  const data = await finnhub(() => fetchJson(url, "Finnhub earnings"));
   const dates = (data?.earningsCalendar ?? [])
     .map((e) => e.date)
     .filter(Boolean)
@@ -359,7 +360,7 @@ async function fetchProfile(ticker, token) {
     `https://finnhub.io/api/v1/stock/profile2` +
     `?symbol=${encodeURIComponent(ticker)}&token=${token}`;
   try {
-    const d = await fetchJson(url, "Finnhub profile");
+    const d = await finnhub(() => fetchJson(url, "Finnhub profile"));
     return {
       sector: d?.finnhubIndustry ?? null,
       name: d?.name ?? null,

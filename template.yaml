@@ -93,7 +93,8 @@ Globals:
     Architectures:
       - arm64                    # cheaper/faster; SDK + our pure JS are arch-agnostic
     MemorySize: 512
-    Timeout: 120                 # a full watchlist scan makes many feed calls
+    Timeout: 300                 # throttled Finnhub calls across ~40 names take a
+                                 # few minutes; 5-min ceiling leaves margin
     Tags:
       Project: gerchik-perchik   # required on every resource
     Environment:

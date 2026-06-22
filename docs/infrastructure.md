@@ -39,7 +39,8 @@ labeler later):
   `reason`, `sector`, plus `strategyVersion` and `dataAsOf`, plus a `metrics` block
   (raw inputs: `rsi`, `atr`, `volumeRatio`, level prices, `daysToEarnings`,
   Minervini `ma150`/`ma200SlopePct`, Turtle `high20d`/`high55d`, RS returns
-  `return21/63/126/252d`) and a `fundamentals` block (O'Neil capture:
+  `return21/63/126/252d`, and relative strength `rsRaw`/`rsRank`/`rsVsSpy`
+  (cross-sectional, capture-only)) and a `fundamentals` block (O'Neil capture:
   `epsGrowthQtr`, `salesGrowthQtr`, `annualEpsGrowth`, `grossMarginTTM`, `roeTTM`,
   `debtToEquity`) — all **captured, not scored** — for Phase 8 analysis. Every
   decision is snapshotted — including `NO_SIGNAL`, gate rejections, and `NO_DATA`.

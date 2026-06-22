@@ -9,6 +9,7 @@
 // fundamentals hiccup never sinks a scan.
 
 import { getParameter } from "./ssm.mjs";
+import { finnhub } from "./ratelimit.mjs";
 
 const FINNHUB_KEY_PATH = "/edge-hunter/finnhub/api_key";
 
@@ -45,7 +46,7 @@ export async function getFundamentals(ticker, opts = {}) {
     const fetchFn = opts.fetchFn ?? fetch;
     const key = opts.apiKey ?? (await getParameter(FINNHUB_KEY_PATH));
     const url = `https://finnhub.io/api/v1/stock/metric?symbol=${encodeURIComponent(ticker)}&metric=all&token=${key}`;
-    const res = await fetchFn(url);
+    const res = await finnhub(() => fetchFn(url));
     if (!res.ok) return { ...EMPTY };
     const data = await res.json();
     return extractFundamentals(data?.metric);
