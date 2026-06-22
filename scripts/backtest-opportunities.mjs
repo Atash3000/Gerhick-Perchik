@@ -106,6 +106,13 @@ for (const w of watchlist) {
 }
 console.log(`fetched bars for ${fetched}/${watchlist.length} names\n`);
 
+// Refuse on low symbol coverage (e.g. Tiingo monthly 500-symbol quota on the
+// shared key) — partial-universe results would mislead.
+if (fetched / watchlist.length < 0.9) {
+  console.error(`ABORT: only ${fetched}/${watchlist.length} symbols fetched (<90%). Likely Tiingo monthly quota; refusing to produce unreliable numbers.`);
+  process.exit(2);
+}
+
 // Checkpoints: weekly over the last MONTHS using SPY's trading calendar.
 const cutoff = new Date(); cutoff.setUTCMonth(cutoff.getUTCMonth() - MONTHS);
 const cutoffStr = cutoff.toISOString().slice(0, 10);

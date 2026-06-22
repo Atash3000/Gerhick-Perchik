@@ -11,7 +11,8 @@
 import { getParameter } from "./ssm.mjs";
 import { finnhub } from "./ratelimit.mjs";
 
-const FINNHUB_KEY_PATH = "/edge-hunter/finnhub/api_key";
+// Finnhub stays a shared key (scope). Path env-driven for consistency.
+const FINNHUB_KEY_PATH = process.env.FINNHUB_KEY_PATH || "/edge-hunter/finnhub/api_key";
 
 // Pull the first present numeric value among candidate keys; else null.
 function num(metric, ...keys) {
