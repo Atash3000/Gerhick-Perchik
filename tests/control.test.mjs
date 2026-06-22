@@ -58,29 +58,38 @@ test("formatStats renders a summary, and a friendly empty message", () => {
   assert.match(formatStats(empty), /No closed outcomes yet/);
 });
 
-test("formatAlarm parses a CloudWatch SNS message, tolerates non-JSON", () => {
-  const msg = JSON.stringify({
-    AlarmName: "gp-scan-failures",
-    NewStateValue: "ALARM",
-    NewStateReason: "Threshold crossed",
-  });
-  const out = formatAlarm(msg);
-  assert.match(out, /gp-scan-failures/);
-  assert.match(out, /ALARM/);
-  assert.match(formatAlarm("plain text"), /plain text/);
+const ALARM_MSG = JSON.stringify({
+  AlarmName: "gp-scan-failures",
+  AlarmDescription: "Sustained gp_scan_failed events from the scanner or labeler.",
+  NewStateValue: "ALARM",
+  OldStateValue: "OK",
+  NewStateReason: "Threshold Crossed: 1 datapoint [41.0 (22/06/26 14:36:00)] was greater than or equal to the threshold (3.0).",
+  StateChangeTime: "2026-06-22T14:36:00.000Z", // 14:36 UTC = 10:36 AM EDT
+  Region: "us-east-1",
+  Trigger: { MetricName: "ScanFailures", Namespace: "GerchikPerchik", Threshold: 3, Period: 3600, EvaluationPeriods: 1 },
 });
 
-test("formatAlarm adds a New-York-local timestamp from StateChangeTime", () => {
-  const msg = JSON.stringify({
-    AlarmName: "gp-scan-failures",
-    NewStateValue: "ALARM",
-    NewStateReason: "datapoint [41.0 (22/06/26 14:36:00)] >= threshold (3.0)",
-    StateChangeTime: "2026-06-22T14:36:00.000Z", // 14:36 UTC = 10:36 AM EDT
-  });
-  const out = formatAlarm(msg);
-  assert.match(out, /🕐/);
-  assert.match(out, /10:36\s?AM EDT/); // converted to NYC time
-  assert.match(out, /times above are UTC/);
+test("formatAlarm: structured ALARM message (value, threshold, ET time, hint)", () => {
+  const out = formatAlarm(ALARM_MSG);
+  assert.match(out, /GERCHIK-PERCHIK · OPS ALERT/);
+  assert.match(out, /🔴 ALARM — gp-scan-failures/);
+  assert.match(out, /🕐 .*10:36\s?AM EDT/); // NY local, not UTC
+  assert.match(out, /📊 41 failures in 1h\s+\(alarm at ≥ 3\)/);
+  assert.match(out, /💬 Sustained gp_scan_failed/);
+  assert.match(out, /🔎 Often a data-feed \(Tiingo\) outage/);
+  assert.match(out, /📂 GerchikPerchik\/ScanFailures/);
+  assert.match(out, /🌎 us-east-1/);
+});
+
+test("formatAlarm: OK state renders a green RESOLVED message", () => {
+  const ok = formatAlarm(JSON.stringify({ ...JSON.parse(ALARM_MSG), NewStateValue: "OK" }));
+  assert.match(ok, /🟢 RESOLVED — gp-scan-failures/);
+  assert.match(ok, /✅ Recovered/);
+});
+
+test("formatAlarm tolerates non-JSON", () => {
+  assert.match(formatAlarm("plain text"), /OPS ALERT/);
+  assert.match(formatAlarm("plain text"), /plain text/);
 });
 
 test("formatEt converts UTC ISO to NY local (EDT in summer)", () => {
