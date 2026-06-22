@@ -109,34 +109,71 @@ export function formatStats(stats, label) {
 }
 
 // Format an ISO timestamp in New York local time (handles EST/EDT). Returns null
-// on a missing/unparseable value.
+// on a missing/unparseable value. e.g. "Jun 22, 2026, 10:36 AM EDT".
 export function formatEt(iso) {
   if (!iso) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
   return new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
-    year: "numeric", month: "2-digit", day: "2-digit",
+    month: "short", day: "numeric", year: "numeric",
     hour: "2-digit", minute: "2-digit", hour12: true, timeZoneName: "short",
   }).format(d);
 }
 
-// Turn a CloudWatch-alarm SNS message into a Telegram line. Pure; tolerates
-// non-JSON payloads. Adds a New-York-local timestamp (CloudWatch's own text is
-// UTC, which is confusing for an NYC user).
+// Human window from period(seconds) × evaluationPeriods. e.g. 3600 → "1h".
+function humanWindow(periodSec, evals = 1) {
+  if (!periodSec) return null;
+  const s = periodSec * evals;
+  if (s % 3600 === 0) return `${s / 3600}h`;
+  if (s % 60 === 0) return `${s / 60}m`;
+  return `${s}s`;
+}
+
+// Turn a CloudWatch-alarm SNS message into a structured, scannable Telegram
+// message — vertical layout, emoji, NY-local time, the observed value vs the
+// threshold, the alarm description, and a hint for the known metric. Pure;
+// tolerates non-JSON payloads.
 export function formatAlarm(snsMessage) {
-  let parsed;
+  let p;
   try {
-    parsed = JSON.parse(snsMessage);
+    p = JSON.parse(snsMessage);
   } catch {
-    return `⚠️ Ops alert: ${snsMessage}`;
+    return `🚨 GERCHIK-PERCHIK · OPS ALERT\n${snsMessage}`;
   }
-  const name = parsed.AlarmName ?? "alarm";
-  const state = parsed.NewStateValue ?? "?";
-  const reason = parsed.NewStateReason ?? "";
-  const et = formatEt(parsed.StateChangeTime);
-  const lines = [`⚠️ Ops alert: ${name} → ${state}`];
+  const state = p.NewStateValue ?? "?";
+  const isAlarm = state === "ALARM";
+  const isOk = state === "OK";
+  const dot = isAlarm ? "🔴" : isOk ? "🟢" : "🟡";
+  const verb = isAlarm ? "ALARM" : isOk ? "RESOLVED" : state;
+  const name = p.AlarmName ?? "alarm";
+  const et = formatEt(p.StateChangeTime);
+  const trig = p.Trigger ?? {};
+  const metric = trig.MetricName ? `${trig.Namespace ?? "?"}/${trig.MetricName}` : null;
+  const threshold = typeof trig.Threshold === "number" ? trig.Threshold : null;
+  const win = humanWindow(trig.Period, trig.EvaluationPeriods);
+  const m = /\[\s*([\d.]+)\s*\(/.exec(p.NewStateReason ?? "");
+  const value = m ? Number(m[1]) : null;
+
+  const lines = ["🚨 GERCHIK-PERCHIK · OPS ALERT", "━━━━━━━━━━━━━━━━━━━━"];
+  lines.push(`${dot} ${verb} — ${name}`);
   if (et) lines.push(`🕐 ${et}`);
-  if (reason) lines.push(`${reason}  (times above are UTC)`);
+  lines.push("");
+
+  if (isOk) {
+    lines.push(`✅ Recovered — back under the threshold${threshold != null ? ` (≥ ${threshold})` : ""}.`);
+  } else if (value != null && threshold != null) {
+    lines.push(`📊 ${value} failures${win ? ` in ${win}` : ""}  (alarm at ≥ ${threshold})`);
+  } else if (p.NewStateReason) {
+    lines.push(`📊 ${p.NewStateReason}  (times are UTC)`);
+  }
+
+  if (p.AlarmDescription) lines.push(`💬 ${p.AlarmDescription}`);
+  if (isAlarm && /ScanFailures/.test(trig.MetricName ?? "")) {
+    lines.push("🔎 Often a data-feed (Tiingo) outage — check scan coverage.");
+  }
+  lines.push("");
+  if (metric) lines.push(`📂 ${metric}`);
+  if (p.Region) lines.push(`🌎 ${p.Region}`);
   return lines.join("\n").trim();
 }
