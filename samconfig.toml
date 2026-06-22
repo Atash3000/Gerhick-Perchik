@@ -23,4 +23,10 @@ confirm_changeset = true
 tags = "Project=gerchik-perchik"
 # Scanner schedule stays OFF on every deploy until the pipeline is ready
 # (flip to true here, reviewed, when going to Phase 6+). See template.yaml.
-parameter_overrides = "ScheduleEnabled=false"
+#
+# Telegram SSM paths are PINNED here: the Lambda code reads the dedicated
+# /gerchik-perchik/telegram/* paths, and CloudFormation otherwise keeps the stale
+# pre-rename parameter values (UsePreviousValue), which left the IAM role scoped to
+# the old paths → AccessDenied on GetParameter. Pinning forces the IAM ARNs to
+# match the code.
+parameter_overrides = "ScheduleEnabled=false TelegramBotTokenPath=/gerchik-perchik/telegram/bot_token TelegramChatIdPath=/gerchik-perchik/telegram/chat_id TelegramWebhookSecretPath=/gerchik-perchik/telegram/webhook_secret"
