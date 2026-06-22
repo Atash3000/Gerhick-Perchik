@@ -51,7 +51,13 @@ labeler later):
   result fields.
 
 Per-name write failures are logged (`gp_scan_failed`) and skipped — one bad write
-never sinks the scan. Still **no alerts** (that's Phase 6).
+never sinks the scan.
+
+The scan summary carries a **coverage** block (B7): `expectedCount`, `scannedCount`,
+`snapshotsWritten`, `freshDataCount`, `noDataCount`, `errorCount`, `coveragePct`,
+plus `degraded`/`degradedReason`. A run with 0 snapshots, error rate ≥ 50%, or
+fresh-data coverage < 50% emits `gp_scan_failed` → the ops alarm pages via Telegram
+(catches silent feed outages that otherwise look like a successful empty scan).
 
 ### `gp-config` tunables (the ACTIVE row)
 

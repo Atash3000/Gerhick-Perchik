@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { labelSignal, OUTCOME } from "../lambdas/shared/labeling.mjs";
+import { labelSignal, OUTCOME, spyBenchmark } from "../lambdas/shared/labeling.mjs";
 
 const SIGNAL = { entry: 100, stop: 97, target: 110, entryDate: "2026-06-18" };
 const CONFIG = { feeBps: 10, slippageBps: 5, timeoutTradingDays: 5 };
@@ -164,3 +164,35 @@ test("entry bar missing: falls back to scaleFactor 1 and flags entryBarMissing",
   assert.equal(r.outcome, OUTCOME.STOP); // unchanged behavior on the fallback path
   assert.equal(r.exitPrice, 97);
 });
+
+// --- SPY benchmark (B6) -------------------------------------------------------
+
+test("spyBenchmark computes SPY buy-hold return over the window (adjusted)", () => {
+  const spy = [
+    { date: "2026-06-17", close: 500 },
+    { date: "2026-06-18", close: 510 }, // entry
+    { date: "2026-06-19", close: 515 },
+    { date: "2026-06-22", close: 530 }, // exit
+  ];
+  const r = spyBenchmark(spy, "2026-06-18", "2026-06-22");
+  assert.equal(r.spyEntry, 510);
+  assert.equal(r.spyExit, 530);
+  assert.equal(r.spyReturnPct, round4(((530 / 510) - 1) * 100)); // ~3.9216
+});
+
+test("spyBenchmark uses last bar on/before a date when exact date missing", () => {
+  const spy = [
+    { date: "2026-06-18", close: 510 }, // entry
+    { date: "2026-06-19", close: 520 }, // last <= 2026-06-21 (exit date is a gap)
+  ];
+  const r = spyBenchmark(spy, "2026-06-18", "2026-06-21");
+  assert.equal(r.spyEntry, 510);
+  assert.equal(r.spyExit, 520);
+});
+
+test("spyBenchmark returns nulls when SPY data is unavailable", () => {
+  const r = spyBenchmark(null, "2026-06-18", "2026-06-22");
+  assert.deepEqual(r, { spyEntry: null, spyExit: null, spyReturnPct: null });
+});
+
+function round4(n) { return Math.round(n * 1e4) / 1e4; }

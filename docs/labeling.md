@@ -52,7 +52,11 @@ With the seed defaults (`feeBps 10`, `slippageBps 5`) the round-trip cost is
 re-run can't relabel a closed signal) with:
 
 `outcome` (STOP/TARGET/TIMEOUT), `hitStopFirst`, `hitTargetFirst`, `exitDate`,
-`exitPrice`, `profitPct` (after cost), `daysHeld`, `status: "CLOSED"`, `labeledAt`.
+`exitPrice`, `profitPct` (after cost), `daysHeld`, `status: "CLOSED"`, `labeledAt`,
+the split-audit fields (above), and the **SPY benchmark** (B6): `spyEntry`,
+`spyExit`, `spyReturnPct` (gross buy-and-hold of SPY over the same entry→exit
+window, adjusted bars), and `alphaVsSpyPct = profitPct − spyReturnPct` — so a
+win-rate can be judged against the market, not in a vacuum.
 The original `breakdown` and `strategyVersion` stay on the row — outcome analysis
 must always filter by `strategyVersion`.
 

@@ -34,14 +34,22 @@ const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 // silent data failure — e.g. the feed rate-limits every name, so 0 snapshots are
 // written. Flag those so the ops alarm (keyed on `gp_scan_failed`) pages us.
 // `errorCount` = per-ticker fetch errors + per-ticker persist errors.
-export function assessScanHealth({ scanned, snapshotsWritten, errorCount }) {
-  if (scanned === 0) return { healthy: true, reason: null }; // nothing to scan
+// `freshDataCount` = names that returned fresh market data (drives coverage).
+export const COVERAGE_MIN_PCT = 50;
+export function assessScanHealth({ expectedCount, snapshotsWritten, errorCount, freshDataCount }) {
+  if (!expectedCount) return { healthy: true, reason: null }; // nothing to scan
   if (snapshotsWritten === 0) {
-    return { healthy: false, reason: `no snapshots written across ${scanned} names` };
+    return { healthy: false, reason: `no snapshots written across ${expectedCount} names` };
   }
-  const errRate = errorCount / scanned;
+  const errRate = errorCount / expectedCount;
   if (errRate >= 0.5) {
-    return { healthy: false, reason: `high error rate ${Math.round(errRate * 100)}% (${errorCount}/${scanned})` };
+    return { healthy: false, reason: `high error rate ${Math.round(errRate * 100)}% (${errorCount}/${expectedCount})` };
+  }
+  if (typeof freshDataCount === "number") {
+    const cov = (freshDataCount / expectedCount) * 100;
+    if (cov < COVERAGE_MIN_PCT) {
+      return { healthy: false, reason: `low coverage ${Math.round(cov)}% (${freshDataCount}/${expectedCount} fresh)` };
+    }
   }
   return { healthy: true, reason: null };
 }
@@ -225,11 +233,28 @@ export async function handler(event) {
     }
   }
 
-  // Bad-scan self-alarm: a run with 0 snapshots or a high error rate is a silent
-  // data failure even though the Lambda "succeeded".
+  // Coverage metric (B7) + bad-scan self-alarm. A run with 0 snapshots, a high
+  // error rate, or low fresh-data coverage is a silent data failure even though
+  // the Lambda "succeeded".
   const durationMs = Date.now() - startMs;
+  const expectedCount = watchlist.length;
+  const scannedCount = gathered.length; // got a data object (fresh or NO_DATA)
+  const freshDataCount = gathered.filter((g) => g.md.fresh === true).length;
+  const noDataCount = scannedCount - freshDataCount;
   const errorCount = tally.ERROR + writeErrors;
-  const health = assessScanHealth({ scanned: watchlist.length, snapshotsWritten, errorCount });
+  const coveragePct = expectedCount ? Math.round((freshDataCount / expectedCount) * 1000) / 10 : 0;
+
+  const health = assessScanHealth({ expectedCount, snapshotsWritten, errorCount, freshDataCount });
+
+  const coverage = {
+    expectedCount,
+    scannedCount,
+    snapshotsWritten,
+    freshDataCount,
+    noDataCount,
+    errorCount,
+    coveragePct,
+  };
 
   const summary = {
     ok: true,
@@ -239,24 +264,23 @@ export async function handler(event) {
     startedAt,
     finishedAt: new Date().toISOString(),
     durationMs,
-    scanned: watchlist.length,
+    coverage,
     tally,
-    snapshotsWritten,
     outcomesOpened,
-    writeErrors,
     alertsSent,
     alertErrors,
     candidates,
     alertMode: config.alertMode, // observe (default) / live — live is a human act
   };
 
-  // Emit gp_scan_failed (the alarm keyword) with the full scan summary inline so a
+  // Emit gp_scan_failed (the alarm keyword) with the coverage summary inline so a
   // silent data failure pages us via the ops path and the log is self-describing.
   if (!health.healthy) {
     console.error(
       `gp_scan_failed: degraded scan — ${health.reason} — ` +
-        `scanned=${watchlist.length} snapshotsWritten=${snapshotsWritten} ` +
-        `errors=${errorCount} candidates=${candidates.length} durationMs=${durationMs}`
+        `expected=${expectedCount} fresh=${freshDataCount} noData=${noDataCount} ` +
+        `snapshots=${snapshotsWritten} errors=${errorCount} coverage=${coveragePct}% ` +
+        `candidates=${candidates.length} durationMs=${durationMs}`
     );
   }
 
