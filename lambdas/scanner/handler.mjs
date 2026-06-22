@@ -92,6 +92,7 @@ async function getMarketRegime() {
 
 export async function handler(event) {
   const startedAt = new Date().toISOString();
+  const startMs = Date.now();
 
   // Post-deploy SMOKE TEST: verify the handler LOADS and can reach its core
   // dependencies (config + watchlist reads) — without running a full scan,
@@ -225,16 +226,10 @@ export async function handler(event) {
   }
 
   // Bad-scan self-alarm: a run with 0 snapshots or a high error rate is a silent
-  // data failure even though the Lambda "succeeded". Emit gp_scan_failed so the
-  // ops alarm pages us via Telegram.
-  const health = assessScanHealth({
-    scanned: watchlist.length,
-    snapshotsWritten,
-    errorCount: tally.ERROR + writeErrors,
-  });
-  if (!health.healthy) {
-    console.error(`gp_scan_failed: degraded scan — ${health.reason}`);
-  }
+  // data failure even though the Lambda "succeeded".
+  const durationMs = Date.now() - startMs;
+  const errorCount = tally.ERROR + writeErrors;
+  const health = assessScanHealth({ scanned: watchlist.length, snapshotsWritten, errorCount });
 
   const summary = {
     ok: true,
@@ -243,6 +238,7 @@ export async function handler(event) {
     strategyVersion: STRATEGY_VERSION,
     startedAt,
     finishedAt: new Date().toISOString(),
+    durationMs,
     scanned: watchlist.length,
     tally,
     snapshotsWritten,
@@ -253,6 +249,17 @@ export async function handler(event) {
     candidates,
     alertMode: config.alertMode, // observe (default) / live — live is a human act
   };
+
+  // Emit gp_scan_failed (the alarm keyword) with the full scan summary inline so a
+  // silent data failure pages us via the ops path and the log is self-describing.
+  if (!health.healthy) {
+    console.error(
+      `gp_scan_failed: degraded scan — ${health.reason} — ` +
+        `scanned=${watchlist.length} snapshotsWritten=${snapshotsWritten} ` +
+        `errors=${errorCount} candidates=${candidates.length} durationMs=${durationMs}`
+    );
+  }
+
   console.log("gp_scan_summary", JSON.stringify(summary));
   return summary;
 }
