@@ -131,12 +131,26 @@ without a code change. The scanner and labeler log the paths in use at startup
 (`gp_keypaths {...}`) — **paths only, never the secret values**.
 
 **Tiingo free-tier limit (important):** Tiingo free caps **unique symbols at
-500/month** (plus ~50 req/hour, ~1000/day). The Tiingo key currently defaults to
-the **shared** `/edge-hunter/tiingo/api_key`, so Edge Hunter's broad SEC/insider
-symbol coverage and our 43 names draw from the **same** monthly quota. When the
-combined unique-symbol count exceeds 500, Tiingo returns
+500/month**. The Tiingo key currently defaults to the **shared**
+`/edge-hunter/tiingo/api_key`, so Edge Hunter's broad SEC/insider symbol coverage
+and our names draw from the **same** monthly quota. When the combined unique-symbol
+count exceeds 500, Tiingo returns
 `You have run over your 500 symbol look up for this month` and our scans get
-`NO_DATA` for most names — which B7 coverage flags as degraded → pages.
+`NO_DATA` for most names — which B7 coverage flags as degraded → pages. (Earlier
+notes of a "~50 req/hour" cap are **not** confirmed: a local probe ran 25 rapid
+`getDailyBars` with no throttle and no enforced spacing — the monthly unique-symbol
+cap is the limit we actually hit.)
+
+**Scan-capacity ceiling.** Tiingo is *not* the per-scan bottleneck — the **Finnhub
+limiter** is. Each ticker makes ~3 Finnhub calls (earnings, profile, fundamentals),
+serialized through the 1.2s `finnhub` limiter ≈ **3.6s/name**. So the Lambda
+`Timeout` bounds the universe: 300s ≈ 65 names safe; **900s (Lambda max) ≈ 200
+names** (≈720s + overhead). The watchlist is ~200 names on a **dedicated** Tiingo
+key (200 unique/month ≪ 500 cap). One residual unknown: Tiingo's hourly *request*
+quota is unverified above 25 calls — if it bites at ~200 names/scan, B7 coverage
+will flag it immediately and the watchlist can be trimmed or ramped via
+`enabled`/`/enable`. To grow past ~250, reduce Finnhub calls/ticker (cache
+profile/sector, fetch fundamentals only for candidates).
 
 **Planned fix (tracked as a GitHub issue):** a DEDICATED Gerchik-Perchik Tiingo
 key. Cutover (no code change needed — path is env-driven):
