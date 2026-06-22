@@ -111,6 +111,34 @@ export function labelSignal(signal, bars, config) {
   };
 }
 
+// SPY buy-and-hold benchmark over a closed trade's window (B6). Pure. Uses
+// ADJUSTED SPY bars (close = adjClose) consistently. spyEntry/spyExit are the
+// adjusted SPY closes on entryDate/exitDate (or the last bar on/before each).
+// Returns nulls when SPY data is unavailable. The caller computes
+// alphaVsSpyPct = profitPct(after-cost) - spyReturnPct(gross).
+export function spyBenchmark(spyBars, entryDate, exitDate) {
+  const empty = { spyEntry: null, spyExit: null, spyReturnPct: null };
+  if (!Array.isArray(spyBars) || spyBars.length === 0) return empty;
+  const closeOnOrBefore = (d) => {
+    let v = null;
+    for (const b of spyBars) {
+      if (b.date <= d) v = b.close;
+      else break;
+    }
+    return v;
+  };
+  const spyEntry = closeOnOrBefore(entryDate);
+  const spyExit = closeOnOrBefore(exitDate);
+  if (!(spyEntry > 0) || !(spyExit > 0)) {
+    return { spyEntry: spyEntry == null ? null : round(spyEntry, 4), spyExit: spyExit == null ? null : round(spyExit, 4), spyReturnPct: null };
+  }
+  return {
+    spyEntry: round(spyEntry, 4),
+    spyExit: round(spyExit, 4),
+    spyReturnPct: round((spyExit / spyEntry - 1) * 100, 4),
+  };
+}
+
 function round(n, dp = 2) {
   const f = 10 ** dp;
   return Math.round(n * f) / f;

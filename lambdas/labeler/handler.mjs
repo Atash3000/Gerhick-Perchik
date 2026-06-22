@@ -13,14 +13,25 @@
 
 import { getActiveConfig } from "../shared/config.mjs";
 import { getDailyBars } from "../shared/marketdata.mjs";
-import { labelSignal } from "../shared/labeling.mjs";
+import { labelSignal, spyBenchmark } from "../shared/labeling.mjs";
 import { createStore } from "../shared/store.mjs";
 import { STRATEGY_VERSION } from "../shared/version.mjs";
+
+const round4 = (n) => (typeof n === "number" ? Math.round(n * 1e4) / 1e4 : null);
 
 export async function handler() {
   const startedAt = new Date().toISOString();
   const config = await getActiveConfig(process.env.CONFIG_TABLE);
   const store = createStore();
+
+  // SPY benchmark bars (B6), fetched once per run, adjusted. Best-effort: if this
+  // fails, outcomes still close with null benchmark fields rather than not at all.
+  let spyBars = null;
+  try {
+    spyBars = await getDailyBars("SPY");
+  } catch (e) {
+    console.error(`gp_scan_failed: SPY benchmark fetch: ${e.message}`);
+  }
 
   const open = await store.listOpenOutcomes();
   const tally = { TARGET: 0, STOP: 0, TIMEOUT: 0, stillOpen: 0, errors: 0 };
@@ -46,6 +57,14 @@ export async function handler() {
         continue;
       }
 
+      // SPY benchmark over the same holding window (B6). alpha = strategy
+      // after-cost return minus SPY gross buy-and-hold return over entry→exit.
+      const bench = spyBenchmark(spyBars, o.entryDate, label.exitDate);
+      const alphaVsSpyPct =
+        typeof label.profitPct === "number" && typeof bench.spyReturnPct === "number"
+          ? round4(label.profitPct - bench.spyReturnPct)
+          : null;
+
       const res = await store.closeOutcome(o.pk, o.sk, {
         outcome: label.outcome,
         hitTargetFirst: label.hitTargetFirst,
@@ -59,6 +78,11 @@ export async function handler() {
         splitAdjusted: label.splitAdjusted,
         entryAdjAtLabel: label.entryAdjAtLabel,
         entryBarMissing: label.entryBarMissing,
+        // SPY benchmark (B6):
+        spyEntry: bench.spyEntry,
+        spyExit: bench.spyExit,
+        spyReturnPct: bench.spyReturnPct,
+        alphaVsSpyPct,
       });
       if (res.closed) tally[label.outcome] += 1;
       else tally.stillOpen += 1; // lost a race; already closed elsewhere
