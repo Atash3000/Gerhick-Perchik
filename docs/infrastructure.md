@@ -44,7 +44,13 @@ labeler later):
   `epsGrowthQtr`, `salesGrowthQtr`, `annualEpsGrowth`, `grossMarginTTM`, `roeTTM`,
   `debtToEquity`) — all **captured, not scored** — for Phase 8 analysis. Every
   decision is snapshotted — including `NO_SIGNAL`, gate rejections, and `NO_DATA`.
-- **`gp-outcomes`** — one row per `BUY_CANDIDATE`, opened with `status: "OPEN"`.
+- **`gp-outcomes`** — one row per **new entry**, opened with `status: "OPEN"`. A
+  `BUY_CANDIDATE` opens a new outcome (and alerts) **only when the ticker has no
+  outcome already OPEN** — a name that qualifies many days running does NOT open a
+  fresh overlapping trade each day (that would flood `/analyze` with correlated
+  near-duplicates). Re-entry is allowed once the prior outcome closes. Daily
+  re-alerts for a held position are likewise suppressed; the scan summary reports
+  `reEntriesSkipped`.
   `pk = SIGNAL#<ticker>#<entryDate>`, `sk = epochMs(entryDate)`. Written with a
   `attribute_not_exists(pk)` condition so a re-run never re-opens or clobbers an
   existing (possibly already-labeled) outcome. The Phase 5 labeler fills in the
