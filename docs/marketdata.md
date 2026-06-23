@@ -8,7 +8,7 @@ scoring function needs — nothing more, nothing the scorer has to massage.
 
 API keys are read at runtime from SSM **by path** and decrypted in memory only:
 
-- `/edge-hunter/tiingo/api_key`
+- `/gerchik/tiingo/api_key` (dedicated **premium** Tiingo key — not the shared, capped `/edge-hunter` one)
 - `/edge-hunter/finnhub/api_key`
 
 Values are cached per warm container and are **never** logged, returned, or

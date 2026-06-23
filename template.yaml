@@ -31,8 +31,8 @@ Parameters:
   # runtime. The values themselves never enter the template, code, or logs.
   TiingoKeyPath:
     Type: String
-    Default: /edge-hunter/tiingo/api_key
-    Description: SSM path to the Tiingo API key (EOD history).
+    Default: /gerchik/tiingo/api_key
+    Description: SSM path to the DEDICATED (premium) Gerchik-Perchik Tiingo API key (EOD history). Premium removes the free-tier 500-unique-symbol/month cap; do NOT point this at the shared /edge-hunter/tiingo key (free, capped).
   FinnhubKeyPath:
     Type: String
     Default: /edge-hunter/finnhub/api_key
