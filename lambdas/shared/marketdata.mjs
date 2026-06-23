@@ -350,13 +350,28 @@ export async function getDailyBars(ticker, { startDate, now = new Date() } = {})
 
 // Finnhub earnings calendar → whole days until the next future earnings date
 // (null if none scheduled in the look-ahead window).
+//
+// Resilience: Tiingo bars are the primary feed; Finnhub earnings is secondary.
+// A Finnhub outage/rate-limit must NOT fail an otherwise-healthy, Tiingo-backed
+// ticker — and must never abort the SPY regime check (getMarketRegime calls
+// getMarketData("SPY"), so an uncaught throw here would null the regime and abort
+// the whole scan). On failure we return null and let the scoring earnings gate
+// treat unknown earnings as "not within 3 days" (fail-open) — mirroring
+// fetchProfile's defensive pattern. We log a WARN, not the `gp_scan_failed`
+// keyword, so this tolerated condition does not trip the ops alarm.
 async function fetchDaysToEarnings(ticker, token, now = new Date()) {
   const from = now.toISOString().slice(0, 10);
   const to = isoDaysAgo(-90, now); // 90 days ahead
   const url =
     `https://finnhub.io/api/v1/calendar/earnings` +
     `?from=${from}&to=${to}&symbol=${encodeURIComponent(ticker)}&token=${token}`;
-  const data = await finnhub(() => fetchJson(url, "Finnhub earnings"));
+  let data;
+  try {
+    data = await finnhub(() => fetchJson(url, "Finnhub earnings"));
+  } catch (err) {
+    console.warn(`Finnhub earnings unavailable for ${ticker} (continuing, earnings gate fails open): ${err.message}`);
+    return null;
+  }
   const dates = (data?.earningsCalendar ?? [])
     .map((e) => e.date)
     .filter(Boolean)
