@@ -207,9 +207,14 @@ Resources:
   # Manual position tracking (separate from research outcomes). Two pk namespaces:
   #   POSITION#<ticker> — POSITION_HEADER + BUY_EVENT/SELL_EVENT rows
   #   DECISION#<ticker> — /skip decision rows
-  #   MUTATION#<update_id> — Telegram update_id dedupe markers (TTL-expiring)
-  # pk = S (HASH), sk = S (RANGE). TTL on `ttl` applies ONLY to dedupe markers;
-  # position/decision rows omit `ttl` and never expire (Retain everything).
+  #   MUTATION#<update_id> — Telegram update_id dedupe markers
+  # pk = S (HASH), sk = S (RANGE). Dedupe correctness comes from the conditional
+  # attribute_not_exists(pk) write in store.claimUpdateId, NOT from expiry — the
+  # `ttl` attribute is still written on markers but no table-level TTL is enabled,
+  # so markers are retained (consistent with this project's retain-everything
+  # philosophy; volume is a few tiny rows per mutating command). TTL was dropped
+  # because the CD deploy role lacks dynamodb:UpdateTimeToLive — see issue to
+  # re-enable once that permission is granted.
   # Design: docs/superpowers/specs/2026-06-23-manual-position-tracking-design.md
   PositionsTable:
     Type: AWS::DynamoDB::Table
@@ -228,9 +233,6 @@ Resources:
           KeyType: HASH
         - AttributeName: sk
           KeyType: RANGE
-      TimeToLiveSpecification:
-        AttributeName: ttl
-        Enabled: true
       Tags:
         - Key: Project
           Value: gerchik-perchik

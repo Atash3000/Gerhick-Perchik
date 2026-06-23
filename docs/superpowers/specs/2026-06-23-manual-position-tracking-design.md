@@ -68,18 +68,27 @@ Four logical record types share the table, distinguished by `recordType`:
 | `BUY_EVENT`       | `POSITION#<ticker>`  | `<entryDate>#<positionId>#BUY#<ts>`        |
 | `SELL_EVENT`      | `POSITION#<ticker>`  | `<entryDate>#<positionId>#SELL#<ts>`       |
 | `DECISION` (skip) | `DECISION#<ticker>`  | `<skippedAt>#<id>`                         |
-| dedupe marker     | `MUTATION#<update_id>` | `<ts>` (carries `ttl`, auto-expires)     |
+| dedupe marker     | `MUTATION#<update_id>` | `<ts>` (carries `ttl`; retained — see TTL note) |
 
 A single `Query` on `pk=POSITION#<ticker>` with
 `begins_with(sk, "<entryDate>#<positionId>")` returns the header plus its full
 event log in order — the audit trail (sells are events, never an overwrite).
 
-### TTL
+### TTL — DEFERRED at deploy time (see issue #49)
 
-`TimeToLiveSpecification` on attribute `ttl` is **enabled**, but used **only** by
-the `MUTATION#<update_id>` dedupe markers (e.g. ~24h expiry). Position, event, and
-decision rows omit `ttl` and therefore **never expire** — preserving the
-Retain-everything rule that makes this history the point of the project.
+Original design: a `TimeToLiveSpecification` on attribute `ttl`, used **only** by
+the `MUTATION#<update_id>` dedupe markers (~24h expiry), with position/event/decision
+rows omitting `ttl` so they never expire.
+
+**As shipped, the table-level TTL is NOT enabled.** The CD deploy role
+(`gp-github-deploy-role`) lacks `dynamodb:UpdateTimeToLive`, so the
+`TimeToLiveSpecification` was removed from `template.yaml` to let CD deploy. This
+does **not** affect dedupe correctness — that comes from the conditional
+`attribute_not_exists(pk)` write in `store.claimUpdateId`, not from expiry.
+`claimUpdateId` still writes a `ttl` attribute on markers, so re-enabling is a
+one-line change once the deploy role gains the permission (tracked in issue #49).
+Until then, dedupe markers are retained (a few tiny rows per mutating command) —
+consistent with this project's retain-everything philosophy.
 
 ---
 

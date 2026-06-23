@@ -21,7 +21,7 @@ Copied verbatim from the spec / CLAUDE.md — every task implicitly includes the
 - **`update_id` dedupe is mandatory** for the three mutating commands (`/bought`, `/sell`, `/skip`).
 - **`positions.mjs` is pure & deterministic** — no `crypto`/`Date` inside; `positionId`/`id`/timestamps are injected by the caller.
 - **All rows carry `commandSource: "telegram"`.** No unrealized P/L in v1.
-- **New table `gp-positions`:** `PAY_PER_REQUEST`, `DeletionPolicy: Retain`, `UpdateReplacePolicy: Retain`, `Project: gerchik-perchik` tag, `pk` (S) HASH / `sk` (S) RANGE, TTL on attribute `ttl` (dedupe markers only).
+- **New table `gp-positions`:** `PAY_PER_REQUEST`, `DeletionPolicy: Retain`, `UpdateReplacePolicy: Retain`, `Project: gerchik-perchik` tag, `pk` (S) HASH / `sk` (S) RANGE. (Originally specced with TTL on attribute `ttl` for dedupe markers; **table-level TTL was dropped at deploy time** — the CD deploy role lacks `dynamodb:UpdateTimeToLive`. Dedupe correctness is unaffected; re-enable tracked in issue #49.)
 - **Human-only, never the agent:** no `STRATEGY_VERSION` bump, no `alertMode` change, no `gp-config` trading-row write.
 - **Branch:** `feat/manual-position-tracking`. Conventional commits. Commit per task.
 
