@@ -104,6 +104,7 @@ Globals:
         OUTCOMES_TABLE: !Ref OutcomesTable
         CONFIG_TABLE: !Ref ConfigTable
         WATCHLIST_TABLE: !Ref WatchlistTable
+        POSITIONS_TABLE: !Ref PositionsTable
         # SSM paths (references only — never the secret values).
         TIINGO_KEY_PATH: !Ref TiingoKeyPath
         FINNHUB_KEY_PATH: !Ref FinnhubKeyPath
@@ -202,6 +203,37 @@ Resources:
       Tags:
         - Key: Project
           Value: gerchik-perchik
+
+  # Manual position tracking (separate from research outcomes). Two pk namespaces:
+  #   POSITION#<ticker> — POSITION_HEADER + BUY_EVENT/SELL_EVENT rows
+  #   DECISION#<ticker> — /skip decision rows
+  #   MUTATION#<update_id> — Telegram update_id dedupe markers (TTL-expiring)
+  # pk = S (HASH), sk = S (RANGE). TTL on `ttl` applies ONLY to dedupe markers;
+  # position/decision rows omit `ttl` and never expire (Retain everything).
+  # Design: docs/superpowers/specs/2026-06-23-manual-position-tracking-design.md
+  PositionsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: gp-positions
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: Project
+          Value: gerchik-perchick
 
   # ===========================================================================
   # Scanner Lambda (skeleton). Phase 3 wires the read path + schedule + IAM.
@@ -367,6 +399,9 @@ Resources:
             TableName: !Ref WatchlistTable
         - DynamoDBReadPolicy:
             TableName: !Ref OutcomesTable
+        # /bought /sell /skip /positions read+write gp-positions (+ update_id dedupe markers).
+        - DynamoDBCrudPolicy:
+            TableName: !Ref PositionsTable
       Events:
         OpsAlerts:
           Type: SNS
