@@ -233,7 +233,7 @@ Resources:
         Enabled: true
       Tags:
         - Key: Project
-          Value: gerchik-perchick
+          Value: gerchik-perchik
 
   # ===========================================================================
   # Scanner Lambda (skeleton). Phase 3 wires the read path + schedule + IAM.

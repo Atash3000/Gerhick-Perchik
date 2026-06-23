@@ -121,3 +121,26 @@ test("/positions lists open positions", async () => {
   const reply = await dispatch("/positions", DEPS(store));
   assert.match(reply, /NVDA 10\/20 @ 100\.00/);
 });
+
+test("/sell renders a losing partial with negative P/L", async () => {
+  const store = fakeStore({
+    openPosition: { pk: "POSITION#NVDA", sk: "2026-06-23#pos-1", ticker: "NVDA", positionId: "pos-1", entryDate: "2026-06-23", remainingShares: 20, avgEntryPrice: 100, realizedProfitDollars: 0, costBasisSoldCumulative: 0 },
+  });
+  const reply = await dispatch("/sell NVDA 10 90", DEPS(store));
+  assert.equal(store.calls.recordSell.length, 1);
+  assert.match(reply, /📉 Sold 10 NVDA @ 90\.00 \(-10\.00%, -\$100\.00\)\. 10 remain open\./);
+});
+
+test("/skip records an unlinked decision when no open outcome", async () => {
+  const store = fakeStore(); // findLatestOpenOutcome → null
+  const reply = await dispatch("/skip AMD", DEPS(store));
+  assert.equal(store.calls.recordDecision.length, 1);
+  assert.equal(store.calls.recordDecision[0].linked, false);
+  assert.match(reply, /⏭️ Skipped AMD \(unlinked\)\./);
+});
+
+test("/positions does not claim an update_id", async () => {
+  const store = fakeStore({ openPositions: [] });
+  await dispatch("/positions", DEPS(store));
+  assert.equal(store.calls.claimUpdateId.length, 0);
+});
