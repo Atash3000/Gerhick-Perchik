@@ -293,6 +293,21 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
       }
     },
 
+    // Create or overwrite (upsert) a gp-watchlist row. For a future auto-refresh
+    // universe Lambda — the static seed uses scripts/seed.mjs. Idempotent (Put
+    // overwrites the same pk). setWatchlistEnabled can only flip an EXISTING row;
+    // this is how a new ticker first enters the universe.
+    async putWatchlistRow({ ticker, sector = null, enabled = true, qualityTier = null }) {
+      if (!ticker) throw new Error("putWatchlistRow: ticker required");
+      await doc.send(
+        new PutCommand({
+          TableName: watchTable,
+          Item: { pk: `TICKER#${ticker}`, ticker, sector, enabled, qualityTier },
+        })
+      );
+      return { ok: true, ticker };
+    },
+
     // All outcome rows with a given status (paginated scan). Used by /stats.
     async listOutcomesByStatus(status) {
       const items = [];

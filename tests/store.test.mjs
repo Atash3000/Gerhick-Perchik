@@ -345,6 +345,25 @@ test("setWatchlistEnabled on an unknown ticker returns ok:false (no throw)", asy
   assert.match(r.reason, /not on watchlist/);
 });
 
+test("putWatchlistRow upserts a full watchlist row", async () => {
+  const client = { calls: [], async send(cmd) { this.calls.push(cmd.input); return {}; } };
+  const store = createStore({ client, watchlistTable: "T-wl" });
+
+  const r = await store.putWatchlistRow({ ticker: "NVDA", sector: "Technology", qualityTier: "A" });
+  assert.deepEqual(r, { ok: true, ticker: "NVDA" });
+  const inp = client.calls[0];
+  assert.equal(inp.TableName, "T-wl");
+  assert.deepEqual(inp.Item, {
+    pk: "TICKER#NVDA", ticker: "NVDA", sector: "Technology", enabled: true, qualityTier: "A",
+  });
+  assert.equal(inp.ConditionExpression, undefined); // upsert, not guarded
+});
+
+test("putWatchlistRow requires a ticker", async () => {
+  const store = createStore({ client: { async send() {} }, watchlistTable: "T-wl" });
+  await assert.rejects(() => store.putWatchlistRow({ sector: "Technology" }), /ticker required/);
+});
+
 test("listOutcomesByStatus scans by status", async () => {
   const items = [{ pk: "SIGNAL#MSFT#2026-06-18", status: "CLOSED" }];
   const client = { calls: [], async send(cmd) { this.calls.push(cmd.input); return { Items: items }; } };
