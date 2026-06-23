@@ -387,8 +387,9 @@ async function fetchDaysToEarnings(ticker, token, now = new Date()) {
   return Math.round((next - today) / MS);
 }
 
-// Finnhub company profile → { sector, name, marketCapMillions }. One call covers
-// all three (used for the correlation-gate sector and the alert's name/market cap).
+// Finnhub company profile → { sector, name, marketCapMillions }. Alert-cosmetic
+// only (name + market cap); sector is NOT used downstream. Fetched lazily, per
+// candidate, via getCompanyProfile — NOT on the per-ticker scan hot path.
 async function fetchProfile(ticker, token) {
   const url =
     `https://finnhub.io/api/v1/stock/profile2` +
@@ -403,6 +404,15 @@ async function fetchProfile(ticker, token) {
   } catch {
     return { sector: null, name: null, marketCapMillions: null };
   }
+}
+
+// Lazy company profile for the alert (name + market cap). Called ONLY for the few
+// BUY_CANDIDATEs that actually alert, so the profile call is off the per-ticker
+// hot path. Returns { sector, name, marketCapMillions }; nulls on any failure
+// (cosmetic — the alert proceeds without them).
+export async function getCompanyProfile(ticker) {
+  const token = await getParameter(SSM_PATHS.finnhub);
+  return fetchProfile(ticker, token);
 }
 
 // Latest-bar % change vs the prior close (pure).
@@ -493,16 +503,18 @@ export async function getMarketData(ticker, opts = {}) {
   const return126d = returnPct(bars, 126);
   const return252d = returnPct(bars, 252);
 
+  // Finnhub on the per-ticker hot path is ONLY the earnings call now (Step 2:
+  // shrink the daily Finnhub footprint — ~3 calls/name was the scan bottleneck).
+  // The company profile (name + market cap — alert-cosmetic, never persisted;
+  // sector comes from the watchlist row, not here) is fetched LAZILY via
+  // getCompanyProfile, only for the few candidates that actually alert (scanner).
   const finnhubKey = await getParameter(SSM_PATHS.finnhub);
-  const [daysToEarnings, profile] = await Promise.all([
-    fetchDaysToEarnings(ticker, finnhubKey, now),
-    fetchProfile(ticker, finnhubKey),
-  ]);
+  const daysToEarnings = await fetchDaysToEarnings(ticker, finnhubKey, now);
 
   return {
     ticker,
-    name: profile.name,
-    marketCapMillions: profile.marketCapMillions,
+    name: null, // populated lazily at alert time via getCompanyProfile (candidates only)
+    marketCapMillions: null,
     // Decision-relevant fields are kept at FULL PRECISION so scoring derives
     // stop/R:R and evaluates the close>200MA / R:R / RSI-band / ATR-stop gates on
     // exact numbers. Rounding happens only at the persistence boundary
@@ -527,7 +539,7 @@ export async function getMarketData(ticker, opts = {}) {
     nearestSupport,
     nearestResistance,
     daysToEarnings,
-    sector: profile.sector,
+    sector: null, // unused downstream (scanner + rs use the watchlist row's sector)
     dataAsOf,
     fresh: true,
   };

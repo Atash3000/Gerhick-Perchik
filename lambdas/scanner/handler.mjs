@@ -17,7 +17,7 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, ScanCommand } from "@aws-sdk/lib-dynamodb";
 
 import { getActiveConfig } from "../shared/config.mjs";
-import { getMarketData, KEY_PATHS } from "../shared/marketdata.mjs";
+import { getMarketData, getCompanyProfile, KEY_PATHS } from "../shared/marketdata.mjs";
 import { getFundamentals } from "../shared/fundamentals.mjs";
 import { rsRaw, rsVsSpy, rankPercentiles, sectorStrengthPercentiles } from "../shared/rs.mjs";
 import { score, DECISION } from "../shared/scoring.mjs";
@@ -273,6 +273,17 @@ export async function handler(event) {
     // Alert only on a NEW entry — no daily re-alert for a position already held.
     if (newEntry) {
       candidates.push({ ticker: entry.ticker, score: result.score, rr: result.riskReward });
+
+      // Lazily fetch the company profile (name + market cap) ONLY now — for a name
+      // that's actually alerting — so the profile Finnhub call stays off the
+      // per-ticker scan hot path (Step 2). Cosmetic: nulls if it fails.
+      try {
+        const prof = await getCompanyProfile(entry.ticker);
+        md.name = prof.name;
+        md.marketCapMillions = prof.marketCapMillions;
+      } catch {
+        /* alert proceeds without name/market cap */
+      }
 
       // OBSERVE-mode Telegram alert. Numbers are built deterministically from the
       // result; the LLM only adds a flavor sentence (fixed fallback on failure).
