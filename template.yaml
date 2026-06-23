@@ -374,6 +374,62 @@ Resources:
             Topic: !Ref OpsTopic
 
   # ===========================================================================
+  # Funnel-report Lambda (observability, TEMPORARY). READ-ONLY: scans gp-snapshots
+  # + gp-outcomes, reads gp-config, posts a daily funnel report to the Telegram
+  # channel. Owns NO writable resource — read-only DynamoDB on three tables +
+  # ssm:GetParameter on the two Telegram params + CloudWatch Logs. It NEVER writes
+  # trading data, opens/closes outcomes, invokes the scanner, or changes config.
+  # Disable the schedule after ~5 reports (no deploy needed):
+  #   aws events disable-rule --name gp-funnel-report-schedule --region us-east-1
+  # and remove in a cleanup PR. Design:
+  # docs/superpowers/specs/2026-06-22-funnel-report-observability-design.md
+  # ===========================================================================
+  FunnelReportFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: esm
+        Target: es2022
+        Sourcemap: false
+        OutExtension:
+          - .js=.mjs
+        EntryPoints:
+          - handler.mjs
+        External:
+          - '@aws-sdk/*'
+    Properties:
+      FunctionName: gp-funnel-report
+      CodeUri: lambdas/funnel-report/
+      Description: READ-ONLY daily funnel report to Telegram (observability; temporary, disable after ~5 reports).
+      Policies:
+        # Read ONLY the two Telegram params (mirrors the scanner). No PutParameter.
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource:
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${TelegramBotTokenPath}'
+                - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${TelegramChatIdPath}'
+        # READ-ONLY DynamoDB on exactly three tables. No write actions; no gp-watchlist.
+        - DynamoDBReadPolicy:
+            TableName: !Ref SnapshotsTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref OutcomesTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref ConfigTable
+      Events:
+        DailyFunnelReport:
+          # Independent of the scanner/labeler schedules and the /start /stop toggle —
+          # this is a temporary observability job, stopped by disabling its own rule.
+          Type: Schedule
+          Properties:
+            Name: gp-funnel-report-schedule
+            Description: Daily READ-ONLY funnel report (00:10 UTC after the scan). Disable manually after ~5 reports.
+            Schedule: cron(10 0 ? * TUE-SAT *) # 00:10 UTC, the day after each Mon-Fri 23:30 scan
+            Enabled: true
+
+  # ===========================================================================
   # Ops alarm (Phase 6). Both functions log the keyword `gp_scan_failed` on any
   # failure; a metric filter on each log group feeds a single custom metric, and
   # an alarm fires to the ops SNS topic on sustained failures. The SNS → control

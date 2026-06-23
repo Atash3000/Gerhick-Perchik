@@ -202,6 +202,20 @@ Telegram webhook. Reuse one bot; toggle EventBridge rules and the `gp-config` ro
 Emit log keyword `gp_scan_failed` on failure; CloudWatch metric filter + alarm →
 SNS → control Lambda → Telegram, so sustained failures page you.
 
+**`gp-funnel-report` (observability, temporary).** A READ-ONLY Lambda
+(`lambdas/funnel-report/`) that scans `gp-snapshots` + `gp-outcomes`, reads
+`gp-config`, and posts a daily funnel report (coverage, gate-rejection breakdown,
+`targetType` distribution, top scored, outcome counts) to the Telegram channel at
+00:10 UTC. It owns **no writable resource** — IAM is read-only DynamoDB on three
+tables + `ssm:GetParameter` on the two Telegram params + Logs. It changes nothing:
+no config writes, no opening/closing outcomes, no scanner invoke, no
+recommendations — it reports what the scanner already produced. Stop it after ~5
+reports with `aws events disable-rule --name gp-funnel-report-schedule --region
+us-east-1`, then remove in a cleanup PR. The report's `report.mjs` is a pure,
+unit-tested function; the gate-rejection breakdown is a strict partition of
+`NO_SIGNAL` (single failed gate per row; below-threshold counted separately; an
+`unrecognized` catch-all so no row is dropped).
+
 ---
 
 ## Build order
