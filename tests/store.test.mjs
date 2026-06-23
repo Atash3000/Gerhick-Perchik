@@ -81,6 +81,44 @@ test("writeSnapshot records raw metrics from marketData for tuning", async () =>
   assert.equal(Item.metrics.daysToEarnings, 20);
 });
 
+test("writeSnapshot captures ATR distances + per-share risk/reward + sectorStrengthPct", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });
+  const md = {
+    close: 100, atr: 2, rsi: 58, ma50: 95, ma200: 90,
+    volume: 1_000_000, avgVolume30: 1_000_000,
+    nearestSupport: { price: 98 }, nearestResistance: { price: 110 },
+  };
+  await store.writeSnapshot(buyResult, { asOf: "2026-06-18", marketData: md, sectorStrengthPct: 72.5 });
+  const { Item } = client.calls[0];
+  assert.equal(Item.metrics.distanceToSupportAtr, 1); // (100-98)/2
+  assert.equal(Item.metrics.distanceToResistanceAtr, 5); // (110-100)/2
+  assert.equal(Item.riskPerShare, 3); // entry 100 - stop 97
+  assert.equal(Item.rewardPerShare, 10); // target 110 - entry 100
+  assert.equal(Item.sectorStrengthPct, 72.5);
+});
+
+test("writeSnapshot: ATH breakout (no resistance) → distanceToResistanceAtr null, never fabricated", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });
+  const md = { close: 250, atr: 7, nearestSupport: { price: 197 }, nearestResistance: null };
+  await store.writeSnapshot(buyResult, { asOf: "2026-06-18", marketData: md });
+  const { Item } = client.calls[0];
+  assert.equal(Item.metrics.distanceToResistanceAtr, null);
+  assert.equal(Item.metrics.distanceToSupportAtr, 7.571); // (250-197)/7, 3dp
+});
+
+test("writeSnapshot: no levels / no sector → per-share + sectorStrengthPct null, not fabricated", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });
+  const noLevels = { ...buyResult, decision: "NO_SIGNAL", entry: null, stop: null, target: null, riskReward: null, score: null, breakdown: null };
+  await store.writeSnapshot(noLevels, { asOf: "2026-06-18", marketData: { close: 50, atr: 1 } });
+  const { Item } = client.calls[0];
+  assert.equal(Item.riskPerShare, null);
+  assert.equal(Item.rewardPerShare, null);
+  assert.equal(Item.sectorStrengthPct, null); // not passed → null
+});
+
 test("writeSnapshot rounds full-precision indicator fields for persistence", async () => {
   // marketData now carries FULL-PRECISION decision fields (scoring sees them raw);
   // snapshotMetrics is the persistence boundary that rounds for clean storage.
