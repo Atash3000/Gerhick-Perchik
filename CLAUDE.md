@@ -274,7 +274,13 @@ Do not skip ahead. Never go live on unvalidated thresholds.
 - Before each commit, run `git status` and `git diff` and show me the diff.
   Never commit secrets (they live in SSM) or anything in `.gitignore`.
 - At the end of each phase, when tests are green, push the branch and open a PR
-  so I get a reviewable diff. Do not merge to `main` yourself — I merge after review.
+  for a reviewable diff, then **merge and deploy it yourself** — the human has
+  delegated merging and deploying to the agent and does not want to do these steps
+  manually. Keep PRs small and self-contained so the merged history stays auditable
+  after the fact. (Deploy: `sam validate` → `sam build` → `sam deploy`.)
+- **Still human-only, never the agent (unchanged):** setting `alertMode: live`,
+  bumping `STRATEGY_VERSION`, and live writes to the `gp-config` trading row that
+  the human has explicitly reserved. Delegated merge/deploy does NOT extend to these.
 - Never `git push --force`, never force-push to `main`, never rewrite shared history.
 - When you find or knowingly leave a bug/limitation, open a GitHub Issue
   describing it and reference it in the commit/PR (`fixes #12`). Don't bury
