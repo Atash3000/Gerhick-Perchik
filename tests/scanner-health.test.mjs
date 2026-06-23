@@ -1,6 +1,34 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { assessScanHealth, shouldOpenOutcome } from "../lambdas/scanner/handler.mjs";
+import { assessScanHealth, shouldOpenOutcome, createSectorCounter } from "../lambdas/scanner/handler.mjs";
+
+test("createSectorCounter: seeds from open outcomes and counts by sector", () => {
+  const c = createSectorCounter([
+    { ticker: "MSFT", sector: "Technology" },
+    { ticker: "NVDA", sector: "Technology" },
+    { ticker: "XOM", sector: "Energy" },
+    { ticker: "FOO" }, // no sector → "unknown"
+  ]);
+  assert.equal(c.count("Technology"), 2);
+  assert.equal(c.count("Energy"), 1);
+  assert.equal(c.count("unknown"), 1);
+  assert.equal(c.count(null), 1); // null sector maps to "unknown"
+  assert.equal(c.count("Healthcare"), 0); // unseen sector
+});
+
+test("createSectorCounter: add() increments so same-scan opens accrue toward the cap", () => {
+  // The bug: a static count let multiple same-sector candidates in ONE scan all
+  // pass a cap-3 gate. The counter must grow as outcomes open within the scan.
+  const c = createSectorCounter([
+    { ticker: "MSFT", sector: "Technology" },
+    { ticker: "NVDA", sector: "Technology" },
+  ]);
+  assert.equal(c.count("Technology"), 2); // 2 < cap 3 → first candidate may open
+  c.add("Technology"); // a new same-sector outcome opens this scan
+  assert.equal(c.count("Technology"), 3); // now 3 → cap reached, next is rejected
+  c.add(null); // unknown-sector open
+  assert.equal(c.count("unknown"), 1);
+});
 
 test("shouldOpenOutcome: open a BUY_CANDIDATE only if no position already open", () => {
   const open = new Set(["MSFT"]);
