@@ -73,7 +73,7 @@ runtime via `ssm:GetParameter`. AWS access comes from the local profile.
 
 Data / AI keys — reuse the existing Edge Hunter params:
 
-- `/edge-hunter/tiingo/api_key` (EOD history → MA/ATR/RSI + path for labeling)
+- `/gerchik/tiingo/api_key` — **DEDICATED premium** Tiingo key (EOD history → MA/ATR/RSI + path for labeling). Premium removes the free-tier 500-unique-symbol/month cap. Do NOT use the shared `/edge-hunter/tiingo/api_key` (free, capped, starved by Edge Hunter's universe).
 - `/edge-hunter/finnhub/api_key` (quotes, earnings calendar)
 - `/edge-hunter/anthropic/api_key` (narration — Phase 6)
 
