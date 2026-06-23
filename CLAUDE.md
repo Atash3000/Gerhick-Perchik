@@ -110,9 +110,11 @@ point of this project and must survive a table replacement or stack delete.
   Includes `strategyVersion`.
 - `gp-config` — `pk = "CONFIG"` (S), `sk = "ACTIVE"` (S). One live row holding
   tunables: `buyScoreThreshold`, `atrStopMultiple`, `minRiskReward`,
-  `maxCorrelatedPositions`, `alertMode`, `feeBps`, `slippageBps`,
-  `timeoutTradingDays`, `accountSize`, `riskPctPerTrade`. Read at the
-  start of every run; never hardcode these in the Lambdas.
+  `targetAtrMultiple`, `maxCorrelatedPositions`, `alertMode`, `feeBps`,
+  `slippageBps`, `timeoutTradingDays`, `accountSize`, `riskPctPerTrade`. Read at the
+  start of every run; never hardcode these in the Lambdas. **`targetAtrMultiple` (k)
+  carries an invariant: `k = atrStopMultiple × minRiskReward` (1.5×2 = 3.0). Change
+  one, change all three** — see the scoring rules below.
 - `gp-watchlist` — `pk = TICKER#<ticker>` (S). Fields: `sector`, `enabled`,
   `qualityTier`. The scanner only scans `enabled: true` rows. `sector` feeds the
   correlation gate.
@@ -133,9 +135,26 @@ key (that silently overwrites — do not repeat that class of bug).
 - **Gates first — reject, don't score:** price > 200MA; R:R ≥ `minRiskReward`;
   target above price; no HIGH news; earnings not within 3 days; SPY not below
   200MA; correlated-position cap (`maxCorrelatedPositions`, by `sector`). Fail any
-  gate → no signal, full stop.
-- **Derive levels — never type them in:** `stop = entry − atrStopMultiple×ATR`,
-  `target = nearest resistance`. R:R is the _result_, so it can't be gamed.
+  gate → no signal, full stop. (Note: there is no longer a "no resistance → reject"
+  gate — see the target-derivation rule below.)
+- **Derive levels — never type them in:** `stop = entry − atrStopMultiple×ATR`;
+  `target = max(nearest resistance above entry, entry + targetAtrMultiple×ATR)`. R:R
+  is the _result_, so it can't be gamed. The result carries `targetType`
+  (`RESISTANCE` | `PROJECTED_ATR` | `RESISTANCE_FLOORED_BY_PROJECTED_ATR`),
+  `projectedTarget`, `resistanceTarget`, `targetAtrMultiple` — persisted to snapshots
+  and outcomes for target-type analysis.
+- **ATR-projected target is a PROVISIONAL unblock — it caps winners by design and is
+  measurement-shaped, not the permanent exit.** It replaced the old `target = nearest
+  resistance, reject if none` rule, which discarded the strongest names before scoring
+  (ATH breakouts had no level to anchor to; names pressing a nearby level got garbage
+  ~0%-distance targets). Its only job is to get real candidates into `gp-outcomes`. It
+  is intended to be **replaced by the trailing-exit (Tier 3) engine** once outcomes
+  exist to validate against. **k-invariant (do NOT break):** `targetAtrMultiple` =
+  `atrStopMultiple × minRiskReward` (1.5×2 = 3.0) — the minimum k that lets a projected
+  target clear the R:R gate (projected R:R = `k / atrStopMultiple` = 2.0 at k=3.0). k
+  too low → breakouts re-rejected; k too high → over-extended targets. Removing the gate
+  removes a structural blocker; how many outcomes actually OPEN still depends on names
+  clearing `buyScoreThreshold` (53) — the next lever if candidate flow is too thin.
 - **Score 0–100 (gp-2.0.0):** empiricalEdge 15 (neutral 7.5 until outcomes fill it;
   ceiling 92.5), setup 20, trend 15, momentum 10, volume 8, news 2, rsRank 12,
   growthQuality 13, sectorStrength 5. RS/fundamentals/sector are gradient

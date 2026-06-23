@@ -76,6 +76,10 @@ function noData(marketData, reason) {
     stop: null,
     target: null,
     riskReward: null,
+    targetType: null,
+    projectedTarget: null,
+    resistanceTarget: null,
+    targetAtrMultiple: null,
     gates: null,
   };
 }
@@ -93,6 +97,12 @@ function noSignal(marketData, derived, gates, reason) {
     stop: derived?.stop ?? null,
     target: derived?.target ?? null,
     riskReward: derived?.riskReward ?? null,
+    // Target metadata is present once levels are derived (R:R / targetAbovePrice
+    // rejections); null for gate rejections that fire before derivation.
+    targetType: derived?.targetType ?? null,
+    projectedTarget: derived?.projectedTarget ?? null,
+    resistanceTarget: derived?.resistanceTarget ?? null,
+    targetAtrMultiple: derived?.targetAtrMultiple ?? null,
     gates,
   };
 }
@@ -163,27 +173,60 @@ export function score(marketData, config, marketContext = {}) {
   gates.trend = close > ma200;
   if (!gates.trend) return noSignal(marketData, null, gates, "price not above 200MA");
 
-  // Target = nearest resistance above price. No valid resistance → no tradeable target.
-  gates.hasTarget = !!(nearestResistance && nearestResistance.price > close);
-  if (!gates.hasTarget) return noSignal(marketData, null, gates, "no resistance above price for a target");
-
   // --- 2. Derive levels — never typed in. R:R is the RESULT, so it can't be gamed.
   const entry = close;
   const stop = round(entry - atrStopMultiple * atr, 4);
-  const target = nearestResistance.price;
   const risk = entry - stop;
   gates.validRisk = risk > 0;
   if (!gates.validRisk) return noSignal(marketData, null, gates, "non-positive risk (bad ATR/stop)");
+
+  // Target = max(nearest resistance above entry, an ATR-projected floor).
+  //
+  // PROVISIONAL FUNNEL UNBLOCK — caps winners by design; to be replaced by the
+  // trailing-exit engine once we have outcomes (see
+  // docs/superpowers/specs/2026-06-22-atr-projected-target-design.md). The old rule
+  // (target = nearest resistance, reject if none) discarded the strongest names
+  // before scoring: ATH breakouts had no resistance to anchor to (rejected outright),
+  // and names pressing into a nearby level got garbage ~0%-distance targets (R:R ~0,
+  // rejected at the R:R gate). The projected floor fixes both.
+  //
+  // THE k-INVARIANT (do NOT break): targetAtrMultiple (k) is NOT arbitrary. It equals
+  //   atrStopMultiple * minRiskReward  (1.5 * 2 = 3.0)
+  // — the MINIMUM multiple that lets a projected target clear the R:R gate. Risk is
+  // fixed at atrStopMultiple*ATR, so a projected target gives R:R = k/atrStopMultiple;
+  // at k=3.0 that is exactly minRiskReward (2.0). If k is set BELOW this product,
+  // breakouts get re-rejected at the R:R gate (the original bug returns); ABOVE it,
+  // targets are pushed needlessly far. If a human changes atrStopMultiple or
+  // minRiskReward, k MUST move too. k stays an explicit config knob; when absent it
+  // falls back to the derived invariant (not a magic constant — the two tunables
+  // multiplied).
+  const targetAtrMultiple = config.targetAtrMultiple ?? atrStopMultiple * minRiskReward;
+  const projectedTarget = round(entry + targetAtrMultiple * atr, 4);
+  const resistanceTarget =
+    nearestResistance && Number.isFinite(nearestResistance.price) ? nearestResistance.price : null;
+
+  let target, targetType;
+  if (resistanceTarget !== null && resistanceTarget > entry && resistanceTarget >= projectedTarget) {
+    target = resistanceTarget; // real level is far enough above — use it (unchanged behavior)
+    targetType = "RESISTANCE";
+  } else if (resistanceTarget !== null && resistanceTarget > entry) {
+    target = projectedTarget; // real level is closer than the floor — projection wins
+    targetType = "RESISTANCE_FLOORED_BY_PROJECTED_ATR";
+  } else {
+    target = projectedTarget; // no usable resistance above entry (e.g. ATH breakout)
+    targetType = "PROJECTED_ATR";
+  }
+  const targetMeta = { targetType, projectedTarget, resistanceTarget, targetAtrMultiple };
   const riskReward = round((target - entry) / risk, 3);
 
   gates.targetAbovePrice = target > entry;
   if (!gates.targetAbovePrice) {
-    return noSignal(marketData, { entry, stop, target, riskReward }, gates, "target not above entry");
+    return noSignal(marketData, { entry, stop, target, riskReward, ...targetMeta }, gates, "target not above entry");
   }
 
   gates.riskReward = riskReward >= minRiskReward;
   if (!gates.riskReward) {
-    return noSignal(marketData, { entry, stop, target, riskReward }, gates,
+    return noSignal(marketData, { entry, stop, target, riskReward, ...targetMeta }, gates,
       `R:R ${riskReward} < min ${minRiskReward}`);
   }
 
@@ -224,6 +267,11 @@ export function score(marketData, config, marketContext = {}) {
     stop: round(stop, 2),
     target: round(target, 2),
     riskReward,
+    // Target-derivation metadata (for later target-type behavior analysis).
+    targetType,
+    projectedTarget: round(projectedTarget, 2),
+    resistanceTarget: resistanceTarget === null ? null : round(resistanceTarget, 2),
+    targetAtrMultiple,
     sizing: computeSizing(entry, stop, config),
     gates,
   };

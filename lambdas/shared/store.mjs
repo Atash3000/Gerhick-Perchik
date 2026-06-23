@@ -116,6 +116,11 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
         stop: result.stop ?? null,
         target: result.target ?? null,
         riskReward: result.riskReward ?? null,
+        // Target-derivation metadata (ATR-projected floor) for target-type analysis.
+        targetType: result.targetType ?? null,
+        projectedTarget: result.projectedTarget ?? null,
+        resistanceTarget: result.resistanceTarget ?? null,
+        targetAtrMultiple: result.targetAtrMultiple ?? null,
         gates: result.gates ?? null,
         // Raw inputs for Phase 8 analysis (recorded for EVERY decision, so we can
         // study what predicts outcomes even for gate-rejected names).
@@ -149,6 +154,12 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
         stop: result.stop,
         target: result.target,
         riskReward: result.riskReward,
+        // Target-derivation metadata at entry — lets closed-outcome analysis segment
+        // by how the target was set (RESISTANCE | PROJECTED_ATR | *_FLOORED_*).
+        targetType: result.targetType ?? null,
+        projectedTarget: result.projectedTarget ?? null,
+        resistanceTarget: result.resistanceTarget ?? null,
+        targetAtrMultiple: result.targetAtrMultiple ?? null,
         // Relative strength at entry (capture-only, for /analyze by-RS-rank later):
         rsRaw: rs?.rsRaw ?? null,
         rsRank: rs?.rsRank ?? null,

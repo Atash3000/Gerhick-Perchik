@@ -4,6 +4,7 @@
   "buyScoreThreshold": 53,
   "atrStopMultiple": 1.5,
   "minRiskReward": 2.0,
+  "targetAtrMultiple": 3.0,
   "maxCorrelatedPositions": 3,
   "alertMode": "observe",
   "feeBps": 10,
@@ -12,5 +13,5 @@
   "accountSize": 10000,
   "riskPctPerTrade": 1.0,
   "strategyVersion": "gp-2.0.0",
-  "note": "PROVISIONAL tunables — thresholds/empiricalEdge are guesses until backed by gp-outcomes (Phase 8). buyScoreThreshold 53 is a PROVISIONAL mechanical re-center for the gp-2.0.0 empiricalEdge 15→7.5 shift (a flat -7.5/name), NOT outcome tuning and calibrated against ZERO candidates; Phase B must revisit it against real gp-2.0.0 candidates. alertMode MUST start as 'observe'; only a human flips it to 'live'."
+  "note": "PROVISIONAL tunables — thresholds/empiricalEdge are guesses until backed by gp-outcomes (Phase 8). buyScoreThreshold 53 is a PROVISIONAL mechanical re-center for the gp-2.0.0 empiricalEdge 15→7.5 shift (a flat -7.5/name), NOT outcome tuning and calibrated against ZERO candidates; Phase B must revisit it against real gp-2.0.0 candidates. alertMode MUST start as 'observe'; only a human flips it to 'live'. targetAtrMultiple (k) is a PROVISIONAL ATR-projected target floor that caps winners by design (to be replaced by the trailing-exit engine); INVARIANT: k MUST equal atrStopMultiple*minRiskReward (1.5*2=3.0) — if you change either of those, change k too, or breakouts get re-rejected (k too low) / over-extended (k too high)."
 }
