@@ -6,6 +6,11 @@ import {
   formatStats,
   formatAlarm,
   formatEt,
+  parseTradeArgs,
+  formatBought,
+  formatSell,
+  formatSkip,
+  formatPositions,
 } from "../lambdas/control/commands.mjs";
 
 test("parseCommand handles commands, args, bot mentions, and casing", () => {
@@ -96,4 +101,49 @@ test("formatEt converts UTC ISO to NY local (EDT in summer)", () => {
   assert.match(formatEt("2026-06-22T14:36:00Z"), /10:36\s?AM EDT/);
   assert.equal(formatEt(null), null);
   assert.equal(formatEt("not-a-date"), null);
+});
+
+test("parseCommand upper-cases tickers for bought/sell/skip", () => {
+  assert.equal(parseCommand("/bought nvda 20 249.99").arg, "NVDA");
+  assert.deepEqual(parseCommand("/bought nvda 20 249.99").args, ["nvda", "20", "249.99"]);
+  assert.equal(parseCommand("/sell nvda 10 260").arg, "NVDA");
+  assert.equal(parseCommand("/skip amd too extended").arg, "AMD");
+  assert.equal(parseCommand("/positions").cmd, "positions");
+});
+
+test("parseTradeArgs validates ticker/shares/price", () => {
+  assert.deepEqual(parseTradeArgs(["nvda", "20", "249.99"]), { ok: true, ticker: "NVDA", shares: 20, price: 249.99 });
+  assert.equal(parseTradeArgs(["NVDA", "20"]).ok, false); // missing price
+  assert.equal(parseTradeArgs(["NVDA", "2.5", "10"]).error, "shares"); // non-integer
+  assert.equal(parseTradeArgs(["NVDA", "0", "10"]).error, "shares"); // non-positive
+  assert.equal(parseTradeArgs(["NVDA", "10", "0"]).error, "price"); // non-positive
+  assert.equal(parseTradeArgs(["NVDA", "10", "abc"]).error, "price"); // NaN
+});
+
+test("formatBought distinguishes linked vs unlinked", () => {
+  const linked = { ticker: "NVDA", originalShares: 20, actualEntry: 249.99, linked: true, sourceOutcomePk: "SIGNAL#NVDA#2026-06-20", entryDate: "2026-06-23" };
+  assert.match(formatBought(linked), /✅ Bought NVDA 20 @ 249\.99\./);
+  assert.match(formatBought(linked), /Linked to latest GP signal \(entry 2026-06-20\)/);
+  const unlinked = { ticker: "AMD", originalShares: 5, actualEntry: 100, linked: false, sourceOutcomePk: null, entryDate: "2026-06-23" };
+  assert.match(formatBought(unlinked), /No open GP signal found — position created as manual\/unlinked/);
+});
+
+test("formatSell renders partial and full close", () => {
+  const header = { ticker: "NVDA" };
+  const partial = { closed: false, saleDollars: 100.1, salePct: 4, updatedFields: { remainingShares: 10 } };
+  assert.match(formatSell(partial, header, 10, 260), /📉 Sold 10 NVDA @ 260\.00 \(\+4\.00%, \+\$100\.10\)\. 10 remain open\./);
+  const full = { closed: true, updatedFields: { realizedProfitDollars: 200.2, realizedProfitPctWeighted: 4 } };
+  assert.match(formatSell(full, header, 10, 265), /🏁 Closed NVDA\. Realized \+\$200\.20 \(\+4\.00% weighted\)\./);
+});
+
+test("formatSkip + formatPositions", () => {
+  assert.match(formatSkip({ ticker: "NVDA", linked: true }), /⏭️ Skipped NVDA \(linked to GP signal\)\./);
+  assert.match(formatSkip({ ticker: "AMD", linked: false }), /⏭️ Skipped AMD \(unlinked\)\./);
+  assert.match(formatPositions([]), /No open positions\./);
+  const list = formatPositions([
+    { ticker: "NVDA", remainingShares: 10, originalShares: 20, avgEntryPrice: 100, realizedProfitDollars: 100, linked: true },
+  ]);
+  assert.match(list, /NVDA 10\/20 @ 100\.00/);
+  assert.match(list, /realized \+\$100\.00/);
+  assert.match(list, /linked/);
 });

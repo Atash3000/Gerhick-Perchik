@@ -16,7 +16,9 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   DynamoDBDocumentClient,
   PutCommand,
+  QueryCommand,
   ScanCommand,
+  TransactWriteCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { STRATEGY_VERSION } from "./version.mjs";
@@ -105,11 +107,12 @@ export function snapshotMetrics(md) {
 
 // Build a store bound to a DynamoDB document client + table names. Pass a fake
 // client in tests; in the Lambda, defaults read the env + a real client.
-export function createStore({ client, snapshotsTable, outcomesTable, watchlistTable } = {}) {
+export function createStore({ client, snapshotsTable, outcomesTable, watchlistTable, positionsTable } = {}) {
   const doc = client ?? DynamoDBDocumentClient.from(new DynamoDBClient({}));
   const snapTable = snapshotsTable ?? process.env.SNAPSHOTS_TABLE;
   const outTable = outcomesTable ?? process.env.OUTCOMES_TABLE;
   const watchTable = watchlistTable ?? process.env.WATCHLIST_TABLE;
+  const posTable = positionsTable ?? process.env.POSITIONS_TABLE;
 
   return {
     // One daily snapshot per scored name. `asOf` (YYYY-MM-DD) is the trading day
@@ -308,6 +311,166 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
         ExclusiveStartKey = out.LastEvaluatedKey;
       } while (ExclusiveStartKey);
       return items;
+    },
+
+    // Latest OPEN research outcome for a ticker (used to link a manual /bought
+    // position — or a /skip decision — to its source signal). Small table →
+    // prefix+status scan; picks the highest sk.
+    // TODO(#46): replace the scan with a TICKER#/STATUS# GSI Query if outcomes grow.
+    async findLatestOpenOutcome(ticker) {
+      const prefix = `SIGNAL#${ticker}#`;
+      let best = null;
+      let ExclusiveStartKey;
+      do {
+        const out = await doc.send(
+          new ScanCommand({
+            TableName: outTable,
+            FilterExpression: "begins_with(pk, :p) AND #s = :open",
+            ExpressionAttributeNames: { "#s": "status" },
+            ExpressionAttributeValues: { ":p": prefix, ":open": "OPEN" },
+            ExclusiveStartKey,
+          })
+        );
+        for (const it of out.Items ?? []) {
+          if (!best || it.sk > best.sk) best = it;
+        }
+        ExclusiveStartKey = out.LastEvaluatedKey;
+      } while (ExclusiveStartKey);
+      if (!best) return null;
+      return {
+        pk: best.pk,
+        sk: best.sk,
+        strategyVersion: best.strategyVersion ?? null,
+        stop: best.stop ?? null,
+        entryDate: best.entryDate ?? null,
+      };
+    },
+
+    // The single OPEN position header for a ticker (v1: at most one). null if none.
+    async getOpenPosition(ticker) {
+      // v1: at most one OPEN header per ticker and few events per pk, so a single
+      // Query page suffices; revisit pagination if a ticker's POSITION# pk grows large.
+      const out = await doc.send(
+        new QueryCommand({
+          TableName: posTable,
+          KeyConditionExpression: "pk = :pk",
+          FilterExpression: "recordType = :h AND #s = :open",
+          ExpressionAttributeNames: { "#s": "status" },
+          ExpressionAttributeValues: {
+            ":pk": `POSITION#${ticker}`,
+            ":h": "POSITION_HEADER",
+            ":open": "OPEN",
+          },
+        })
+      );
+      return (out.Items ?? [])[0] ?? null;
+    },
+
+    // Create a position: header (conditional on key absence) + its first buy
+    // event, atomically. The "one open per ticker" rule is enforced by the
+    // caller (getOpenPosition check) before this runs.
+    async createPosition(header, buyEvent) {
+      await doc.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            {
+              Put: {
+                TableName: posTable,
+                Item: header,
+                ConditionExpression: "attribute_not_exists(pk)",
+              },
+            },
+            { Put: { TableName: posTable, Item: buyEvent } },
+          ],
+        })
+      );
+      return { created: true, pk: header.pk, sk: header.sk };
+    },
+
+    // Record a sell: update the header (optimistic lock on remainingShares to
+    // block a double-decrement) + put the SELL_EVENT, atomically. sellResult is
+    // the object returned by positions.applySell.
+    async recordSell(header, sellResult) {
+      const { event, updatedFields } = sellResult;
+      const sets = [];
+      const names = {};
+      const values = {};
+      for (const [k, v] of Object.entries(updatedFields)) {
+        sets.push(`#${k} = :${k}`);
+        names[`#${k}`] = k;
+        values[`:${k}`] = v;
+      }
+      // Seed the optimistic-lock sentinel AFTER the loop so an updatedFields key
+      // named "expected" can never clobber it.
+      values[":expected"] = header.remainingShares;
+      await doc.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            {
+              Update: {
+                TableName: posTable,
+                Key: { pk: header.pk, sk: header.sk },
+                UpdateExpression: "SET " + sets.join(", "),
+                ExpressionAttributeNames: names,
+                ExpressionAttributeValues: values,
+                ConditionExpression: "remainingShares = :expected",
+              },
+            },
+            { Put: { TableName: posTable, Item: event } },
+          ],
+        })
+      );
+      return { recorded: true };
+    },
+
+    // Record a /skip decision row.
+    async recordDecision(decision) {
+      await doc.send(new PutCommand({ TableName: posTable, Item: decision }));
+      return { recorded: true };
+    },
+
+    // All OPEN position headers (for /positions). Small table → paginated scan.
+    async listOpenPositions() {
+      const items = [];
+      let ExclusiveStartKey;
+      do {
+        const out = await doc.send(
+          new ScanCommand({
+            TableName: posTable,
+            FilterExpression: "recordType = :h AND #s = :open",
+            ExpressionAttributeNames: { "#s": "status" },
+            ExpressionAttributeValues: { ":h": "POSITION_HEADER", ":open": "OPEN" },
+            ExclusiveStartKey,
+          })
+        );
+        items.push(...(out.Items ?? []));
+        ExclusiveStartKey = out.LastEvaluatedKey;
+      } while (ExclusiveStartKey);
+      return items;
+    },
+
+    // Idempotency guard for mutating Telegram commands. Conditionally write a
+    // MUTATION#<update_id> marker; a retried delivery fails the condition and is
+    // dropped before any share math. ttlEpochSec auto-expires the marker.
+    async claimUpdateId(updateId, ttlEpochSec) {
+      try {
+        await doc.send(
+          new PutCommand({
+            TableName: posTable,
+            Item: {
+              pk: `MUTATION#${updateId}`,
+              sk: "claim",
+              ttl: ttlEpochSec,
+              claimedAt: new Date().toISOString(),
+            },
+            ConditionExpression: "attribute_not_exists(pk)",
+          })
+        );
+        return { claimed: true };
+      } catch (err) {
+        if (err?.name === "ConditionalCheckFailedException") return { claimed: false };
+        throw err;
+      }
     },
   };
 }

@@ -354,3 +354,105 @@ test("listOutcomesByStatus scans by status", async () => {
   assert.deepEqual(res, items);
   assert.equal(client.calls[0].ExpressionAttributeValues[":st"], "CLOSED");
 });
+
+test("findLatestOpenOutcome scans by ticker prefix + OPEN, picks highest sk", async () => {
+  const items = [
+    { pk: "SIGNAL#NVDA#2026-06-18", sk: 100, status: "OPEN", strategyVersion: "gp-2.0.0", stop: 230, entryDate: "2026-06-18" },
+    { pk: "SIGNAL#NVDA#2026-06-20", sk: 300, status: "OPEN", strategyVersion: "gp-2.0.0", stop: 240, entryDate: "2026-06-20" },
+  ];
+  const client = { calls: [], async send(cmd) { this.calls.push(cmd.input); return { Items: items }; } };
+  const store = createStore({ client, outcomesTable: "T-out" });
+  const r = await store.findLatestOpenOutcome("NVDA");
+  assert.deepEqual(r, { pk: "SIGNAL#NVDA#2026-06-20", sk: 300, strategyVersion: "gp-2.0.0", stop: 240, entryDate: "2026-06-20" });
+  assert.equal(client.calls[0].FilterExpression, "begins_with(pk, :p) AND #s = :open");
+  assert.equal(client.calls[0].ExpressionAttributeValues[":p"], "SIGNAL#NVDA#");
+});
+
+test("findLatestOpenOutcome returns null when none open", async () => {
+  const client = { calls: [], async send() { return { Items: [] }; } };
+  const store = createStore({ client, outcomesTable: "T-out" });
+  assert.equal(await store.findLatestOpenOutcome("ZZZZ"), null);
+});
+
+test("getOpenPosition queries the POSITION pk for an OPEN header", async () => {
+  const header = { pk: "POSITION#NVDA", sk: "2026-06-23#pos-1", recordType: "POSITION_HEADER", status: "OPEN" };
+  const client = { calls: [], async send(cmd) { this.calls.push(cmd.input); return { Items: [header] }; } };
+  const store = createStore({ client, positionsTable: "T-pos" });
+  const r = await store.getOpenPosition("NVDA");
+  assert.deepEqual(r, header);
+  assert.equal(client.calls[0].TableName, "T-pos");
+  assert.equal(client.calls[0].KeyConditionExpression, "pk = :pk");
+  assert.equal(client.calls[0].ExpressionAttributeValues[":pk"], "POSITION#NVDA");
+  assert.equal(client.calls[0].FilterExpression, "recordType = :h AND #s = :open");
+});
+
+test("getOpenPosition returns null when no open header", async () => {
+  const client = { async send() { return { Items: [] }; } };
+  const store = createStore({ client, positionsTable: "T-pos" });
+  assert.equal(await store.getOpenPosition("NVDA"), null);
+});
+
+test("createPosition transact-writes header (conditional) + buy event", async () => {
+  const client = { calls: [], async send(cmd) { this.calls.push(cmd.input); return {}; } };
+  const store = createStore({ client, positionsTable: "T-pos" });
+  const header = { pk: "POSITION#NVDA", sk: "2026-06-23#pos-1" };
+  const buyEvent = { pk: "POSITION#NVDA", sk: "2026-06-23#pos-1#BUY#t" };
+  const r = await store.createPosition(header, buyEvent);
+  assert.deepEqual(r, { created: true, pk: "POSITION#NVDA", sk: "2026-06-23#pos-1" });
+  const items = client.calls[0].TransactItems;
+  assert.equal(items.length, 2);
+  assert.equal(items[0].Put.ConditionExpression, "attribute_not_exists(pk)");
+  assert.equal(items[0].Put.Item, header);
+  assert.equal(items[1].Put.Item, buyEvent);
+});
+
+test("recordSell transact-updates header (optimistic lock) + puts sell event", async () => {
+  const client = { calls: [], async send(cmd) { this.calls.push(cmd.input); return {}; } };
+  const store = createStore({ client, positionsTable: "T-pos" });
+  const header = { pk: "POSITION#NVDA", sk: "2026-06-23#pos-1", remainingShares: 20 };
+  const sellResult = {
+    event: { pk: "POSITION#NVDA", sk: "2026-06-23#pos-1#SELL#t" },
+    updatedFields: { remainingShares: 10, status: "OPEN", realizedProfitDollars: 100 },
+  };
+  await store.recordSell(header, sellResult);
+  const items = client.calls[0].TransactItems;
+  assert.equal(items[0].Update.Key.sk, "2026-06-23#pos-1");
+  assert.equal(items[0].Update.ConditionExpression, "remainingShares = :expected");
+  assert.equal(items[0].Update.ExpressionAttributeValues[":expected"], 20);
+  assert.equal(items[0].Update.ExpressionAttributeValues[":remainingShares"], 10);
+  assert.match(items[0].Update.UpdateExpression, /^SET /);
+  assert.equal(items[1].Put.Item, sellResult.event);
+});
+
+test("recordDecision puts the decision row", async () => {
+  const client = { calls: [], async send(cmd) { this.calls.push(cmd.input); return {}; } };
+  const store = createStore({ client, positionsTable: "T-pos" });
+  const decision = { pk: "DECISION#NVDA", sk: "t#dec-1" };
+  await store.recordDecision(decision);
+  assert.equal(client.calls[0].TableName, "T-pos");
+  assert.equal(client.calls[0].Item, decision);
+});
+
+test("listOpenPositions scans headers with status OPEN", async () => {
+  const headers = [{ pk: "POSITION#NVDA", recordType: "POSITION_HEADER", status: "OPEN" }];
+  const client = { calls: [], async send(cmd) { this.calls.push(cmd.input); return { Items: headers }; } };
+  const store = createStore({ client, positionsTable: "T-pos" });
+  assert.deepEqual(await store.listOpenPositions(), headers);
+  assert.equal(client.calls[0].FilterExpression, "recordType = :h AND #s = :open");
+});
+
+test("claimUpdateId returns claimed:true on first put", async () => {
+  const client = { calls: [], async send(cmd) { this.calls.push(cmd.input); return {}; } };
+  const store = createStore({ client, positionsTable: "T-pos" });
+  const r = await store.claimUpdateId(555, 1_900_000_000);
+  assert.deepEqual(r, { claimed: true });
+  assert.equal(client.calls[0].Item.pk, "MUTATION#555");
+  assert.equal(client.calls[0].Item.ttl, 1_900_000_000);
+  assert.equal(client.calls[0].ConditionExpression, "attribute_not_exists(pk)");
+});
+
+test("claimUpdateId returns claimed:false when already claimed", async () => {
+  const store = createStore({ client: fakeClient({ throwOnce: true }), positionsTable: "T-pos" });
+  const r = await store.claimUpdateId(555, 1_900_000_000);
+  assert.deepEqual(r, { claimed: false });
+});

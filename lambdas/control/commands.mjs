@@ -10,6 +10,10 @@ export const HELP = [
   "/disable <TICKER> — remove it",
   "/stats [30d] — outcome summary for the current strategy version",
   "/analyze [30d] — Phase 8 deep-dive: profit factor + component predictors",
+  "/bought <TICKER> <SHARES> <PRICE> — confirm a manual buy (links latest GP signal)",
+  "/sell <TICKER> <SHARES> <PRICE> — sell part or all of an open position",
+  "/skip <TICKER> [reason] — record that you skipped a signal",
+  "/positions — list open positions",
 ].join("\n");
 
 // "/mode live" → {cmd:'mode', arg:'live'}; "/start@gp_bot" → {cmd:'start'};
@@ -22,12 +26,12 @@ export function parseCommand(text) {
   const cmd = parts[0].slice(1).split("@")[0].toLowerCase();
   const rawArg = parts[1] ?? null;
   // Tickers are upper-cased; mode/stats args stay lower-case.
-  const arg =
-    rawArg && (cmd === "enable" || cmd === "disable")
+  const TICKER_CMDS = new Set(["enable", "disable", "bought", "sell", "skip"]);
+  const arg = rawArg
+    ? TICKER_CMDS.has(cmd)
       ? rawArg.toUpperCase()
-      : rawArg
-        ? rawArg.toLowerCase()
-        : null;
+      : rawArg.toLowerCase()
+    : null;
   return { cmd, arg, args: parts.slice(1) };
 }
 
@@ -176,4 +180,56 @@ export function formatAlarm(snsMessage) {
   if (metric) lines.push(`📂 ${metric}`);
   if (p.Region) lines.push(`🌎 ${p.Region}`);
   return lines.join("\n").trim();
+}
+
+// Parse "/bought TICKER SHARES PRICE" / "/sell TICKER SHARES PRICE" args
+// (the parts after the command token). SHARES must be a positive integer;
+// PRICE a positive number. Returns {ok:true, ticker, shares, price} or
+// {ok:false, error:"usage"|"shares"|"price"}.
+export function parseTradeArgs(args) {
+  if (!args || args.length < 3) return { ok: false, error: "usage" };
+  const ticker = String(args[0]).toUpperCase();
+  const shares = Number(args[1]);
+  const price = Number(args[2]);
+  if (!Number.isInteger(shares) || shares <= 0) return { ok: false, error: "shares" };
+  if (!Number.isFinite(price) || price <= 0) return { ok: false, error: "price" };
+  return { ok: true, ticker, shares, price };
+}
+
+const fmtMoney = (n) => `${n < 0 ? "-" : "+"}$${Math.abs(n).toFixed(2)}`;
+const fmtPct = (n) => `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
+
+export function formatBought(header) {
+  const base = `✅ Bought ${header.ticker} ${header.originalShares} @ ${header.actualEntry.toFixed(2)}.`;
+  if (!header.linked) {
+    return `${base} No open GP signal found — position created as manual/unlinked.`;
+  }
+  const signalDate = header.sourceOutcomePk?.split("#")[2] ?? header.entryDate;
+  return `${base} Linked to latest GP signal (entry ${signalDate}).`;
+}
+
+export function formatSell(sellResult, header, sharesSold, sellPrice) {
+  const { closed, saleDollars, salePct, updatedFields } = sellResult;
+  if (closed) {
+    return `🏁 Closed ${header.ticker}. Realized ${fmtMoney(updatedFields.realizedProfitDollars)} (${fmtPct(updatedFields.realizedProfitPctWeighted)} weighted).`;
+  }
+  return `📉 Sold ${sharesSold} ${header.ticker} @ ${sellPrice.toFixed(2)} (${fmtPct(salePct)}, ${fmtMoney(saleDollars)}). ${updatedFields.remainingShares} remain open.`;
+}
+
+export function formatSkip(decision) {
+  return decision.linked
+    ? `⏭️ Skipped ${decision.ticker} (linked to GP signal).`
+    : `⏭️ Skipped ${decision.ticker} (unlinked).`;
+}
+
+export function formatPositions(headers) {
+  if (!headers.length) return "No open positions.";
+  const lines = ["📂 Open positions:"];
+  for (const h of headers) {
+    const realized = fmtMoney(h.realizedProfitDollars ?? 0);
+    lines.push(
+      `• ${h.ticker} ${h.remainingShares}/${h.originalShares} @ ${h.avgEntryPrice.toFixed(2)} · realized ${realized}${h.linked ? " · linked" : ""}`
+    );
+  }
+  return lines.join("\n");
 }
