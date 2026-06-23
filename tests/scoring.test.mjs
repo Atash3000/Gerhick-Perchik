@@ -194,6 +194,19 @@ test("GATE: earnings within 3 days → NO_SIGNAL", () => {
   assert.match(r.reason, /earnings/);
 });
 
+test("GATE: earnings UNAVAILABLE (null) → fails open, never rejects on earnings", () => {
+  // A Finnhub earnings outage yields daysToEarnings=null (see marketdata
+  // fetchDaysToEarnings). That must NOT reject an otherwise-healthy, Tiingo-backed
+  // name — and must never abort the SPY regime. The gate treats unknown earnings
+  // as "not within 3 days".
+  const md = baseMarketData();
+  md.daysToEarnings = null;
+  const r = score(md, CONFIG, cleanContext);
+  assert.equal(r.gates.earnings, true);
+  assert.doesNotMatch(r.reason ?? "", /earnings/);
+  assert.equal(r.decision, DECISION.BUY_CANDIDATE);
+});
+
 test("GATE: SPY below 200MA → NO_SIGNAL", () => {
   const r = score(baseMarketData(), CONFIG, { ...cleanContext, spyBelow200ma: true });
   assert.equal(r.decision, DECISION.NO_SIGNAL);
