@@ -8,8 +8,12 @@
 // Pass --apply to actually PutItem. Re-running is safe (Put overwrites the same
 // keys; gp-config stays a single ACTIVE row).
 //
-//   node scripts/seed.mjs            # dry run (prints, writes nothing)
-//   node scripts/seed.mjs --apply    # writes config + watchlist
+//   node scripts/seed.mjs                          # dry run (prints, writes nothing)
+//   node scripts/seed.mjs --apply                  # writes config + watchlist
+//   node scripts/seed.mjs --apply --watchlist-only # writes ONLY gp-watchlist (leaves gp-config untouched)
+//
+// --watchlist-only exists because gp-config is a HUMAN-RESERVED trading row (it
+// may hold live-tuned values) — universe expansion must not clobber it.
 //
 // Requires AWS credentials with write access to gp-config and gp-watchlist.
 
@@ -26,6 +30,7 @@ const CONFIG_TABLE = process.env.CONFIG_TABLE || "gp-config";
 const WATCHLIST_TABLE = process.env.WATCHLIST_TABLE || "gp-watchlist";
 
 const apply = process.argv.includes("--apply");
+const watchlistOnly = process.argv.includes("--watchlist-only");
 const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
 async function loadJson(name) {
@@ -44,18 +49,26 @@ async function putItem(tableName, item, label) {
 const config = await loadJson("config.json");
 const watchlist = await loadJson("watchlist.json");
 
-console.log(apply ? "Seeding (APPLY)…" : "Seeding (DRY RUN — pass --apply to write)…");
+console.log(
+  apply ? "Seeding (APPLY)…" : "Seeding (DRY RUN — pass --apply to write)…",
+  watchlistOnly ? "[watchlist-only — gp-config NOT touched]" : ""
+);
 
-// gp-config: the single ACTIVE tunables row. Guard against an accidental live flip.
-if (config.alertMode !== "observe") {
-  throw new Error("refusing to seed: gp-config alertMode must start as 'observe'");
+// gp-config: the single ACTIVE tunables row. Skipped entirely in --watchlist-only
+// mode (it's a human-reserved trading row). Otherwise guard against a live flip.
+if (watchlistOnly) {
+  console.log("[skip] gp-config (--watchlist-only)");
+} else {
+  if (config.alertMode !== "observe") {
+    throw new Error("refusing to seed: gp-config alertMode must start as 'observe'");
+  }
+  await putItem(CONFIG_TABLE, config, "CONFIG#ACTIVE");
 }
-await putItem(CONFIG_TABLE, config, "CONFIG#ACTIVE");
 
 // gp-watchlist: one row per ticker.
 for (const row of watchlist) {
   await putItem(WATCHLIST_TABLE, row, row.pk);
 }
 
-console.log(`Done. config: 1 row, watchlist: ${watchlist.length} rows.`);
+console.log(`Done. config: ${watchlistOnly ? 0 : 1} row, watchlist: ${watchlist.length} rows.`);
 if (!apply) console.log("Nothing was written. Re-run with --apply once the stack is deployed.");

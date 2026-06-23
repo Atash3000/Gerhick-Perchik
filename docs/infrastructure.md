@@ -130,17 +130,24 @@ the `TiingoKeyPath` / `FinnhubKeyPath` template params), so a key can be moved
 without a code change. The scanner and labeler log the paths in use at startup
 (`gp_keypaths {...}`) — **paths only, never the secret values**.
 
-**Tiingo free-tier limits (two caps, both confirmed live):**
-1. **Monthly:** ~**500 unique symbols/month**. (This is why the *shared*
-   `/edge-hunter` key starved us — Edge Hunter's broad coverage blew the combined
-   monthly total; fixed by the dedicated key below.)
-2. **Hourly:** ~**50 requests/hour** — the binding ceiling for scan size. Exceeding
-   it returns HTTP **429** `You have run over your hourly request allocation`
-   (no `Retry-After` header). **This caps a single scan at ~45 names**, because a
-   scan is one burst within an hour. Throttling cannot raise it (pacing 199 calls
-   under 50/hr would take ~4h, past the 900s timeout), so **~200 names is NOT
-   viable on free Tiingo** — that needs a paid tier. The real free ceiling is ~45,
-   not the ~200 the timeout would otherwise allow.
+**Tiingo: dedicated PREMIUM key (`/gerchik/tiingo/api_key`).** Tiingo reads the
+dedicated `/gerchik/tiingo/api_key` (env-driven `TiingoKeyPath`, default + IAM both
+point here; `/edge-hunter/tiingo` is NOT used — it's the shared, capped free key).
+That account is on a **paid plan**, which removes the free-tier limits that used to
+bind us:
+- **Monthly 500-unique-symbol cap → gone.** (On free, the shared `/edge-hunter`
+  key was starved by Edge Hunter's universe; verified 2026-06-23 that the premium
+  `/gerchik` key serves arbitrary symbols with no cap message.)
+- **Hourly request cap → raised far above a single scan's burst.** It no longer
+  bounds scan size.
+
+**Binding ceiling for scan size is now Finnhub + the Lambda timeout, NOT Tiingo.**
+Each ticker makes ~3 Finnhub calls (earnings, profile, fundamentals) serialized
+through the 1.2s `finnhub` limiter ≈ **3.6s/name**. So `Timeout` bounds the
+universe: 300s ≈ 65 names; **900s (Lambda max) ≈ ~200 names** (universe is 199).
+To grow past ~250: cut Finnhub calls/ticker (use the watchlist `sector` instead of
+the profile call, fetch fundamentals only for gate-passing candidates) and/or
+fan-out the scan with two-phase cross-sectional ranking.
 
 **Resilience (scanner-429 fix):** Tiingo calls are routed through a limiter
 (`ratelimit.mjs` `tiingo`) to avoid burst 429s, and through a **bounded retry**
@@ -149,10 +156,7 @@ a run: the SPY **regime fetch catches it and aborts the scan cleanly** (degraded
 summary, not an uncaught Lambda error), and per-ticker 429s already degrade to
 `NO_DATA`/`ERROR`. B7 coverage still flags a degraded run → pages.
 
-**Dedicated key (done — #33/#38):** Tiingo reads `/gerchik/tiingo/api_key`
-(env-driven `TiingoKeyPath`, IAM re-scoped, confirmed via the `gp_keypaths` log).
-This fixed the *monthly* starvation; the *hourly* cap above is separate and bounds
-scan size. Finnhub and Anthropic keys stay shared (`/edge-hunter/*`) per scope.
+Finnhub and Anthropic keys stay shared (`/edge-hunter/*`) per scope.
 
 > The opportunity/quality **backtest scripts refuse to run** when fewer than 90% of
 > watchlist symbols load (the quota case) — better no answer than a misleading one.

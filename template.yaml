@@ -93,8 +93,10 @@ Globals:
     Architectures:
       - arm64                    # cheaper/faster; SDK + our pure JS are arch-agnostic
     MemorySize: 512
-    Timeout: 300                 # throttled Finnhub calls across ~40 names take a
-                                 # few minutes; 5-min ceiling leaves margin
+    Timeout: 900                 # ~3 throttled Finnhub calls/ticker (1.2s limiter)
+                                 # ≈ 3.6s/name; 900s (Lambda max) fits ~200 names
+                                 # (universe is 199); ~65 fit the old 300s ceiling.
+                                 # Tiingo is NOT the bottleneck (premium key, no cap).
     Tags:
       Project: gerchik-perchik   # required on every resource
     Environment:
