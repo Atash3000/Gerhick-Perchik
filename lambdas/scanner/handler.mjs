@@ -43,6 +43,30 @@ export function shouldOpenOutcome(decision, ticker, openTickers) {
   return decision === DECISION.BUY_CANDIDATE && !openTickers.has(ticker);
 }
 
+// Per-sector open-position counter for the correlation gate. Seeded from the
+// outcomes already OPEN at scan start, then add()ed as new outcomes open WITHIN
+// the same scan — so multiple same-sector candidates in one run accrue toward
+// maxCorrelatedPositions instead of all reading a stale start-of-scan count
+// (which let a single scan push a sector past the cap). null/undefined sector →
+// "unknown". Pure.
+export function createSectorCounter(openOutcomes = []) {
+  const key = (sector) => sector ?? "unknown";
+  const counts = {};
+  for (const o of openOutcomes) {
+    const k = key(o.sector);
+    counts[k] = (counts[k] ?? 0) + 1;
+  }
+  return {
+    count(sector) {
+      return counts[key(sector)] ?? 0;
+    },
+    add(sector) {
+      const k = key(sector);
+      counts[k] = (counts[k] ?? 0) + 1;
+    },
+  };
+}
+
 export function assessScanHealth({ expectedCount, snapshotsWritten, errorCount, freshDataCount }) {
   if (!expectedCount) return { healthy: true, reason: null }; // nothing to scan
   if (snapshotsWritten === 0) {
@@ -157,12 +181,9 @@ export async function handler(event) {
   // sector) and de-duplication (one OPEN outcome per ticker at a time — a name
   // that qualifies many days running must NOT open a new overlapping trade each
   // day, which would flood /analyze with correlated near-duplicates).
-  const openBySector = {};
-  const openTickers = new Set();
-  for (const o of await store.listOpenOutcomes()) {
-    openBySector[o.sector ?? "unknown"] = (openBySector[o.sector ?? "unknown"] ?? 0) + 1;
-    openTickers.add(o.ticker);
-  }
+  const openOutcomes = await store.listOpenOutcomes();
+  const sectorCounter = createSectorCounter(openOutcomes); // grows as outcomes open this scan
+  const openTickers = new Set(openOutcomes.map((o) => o.ticker));
 
   const tally = { BUY_CANDIDATE: 0, NO_SIGNAL: 0, NO_DATA: 0, ERROR: 0 };
   let snapshotsWritten = 0;
@@ -208,7 +229,7 @@ export async function handler(event) {
   for (const { entry, md, fundamentals } of gathered) {
     const marketContext = {
       spyBelow200ma: regime.spyBelow200ma,
-      correlatedPositions: openBySector[entry.sector ?? "unknown"] ?? 0,
+      correlatedPositions: sectorCounter.count(entry.sector),
       // PHASE (later): real news classification (issue #1). Clean tape until then.
       newsLevel: "none",
       sector: entry.sector,
@@ -241,6 +262,7 @@ export async function handler(event) {
         if (opened.opened) {
           outcomesOpened += 1;
           openTickers.add(entry.ticker); // guard against any same-scan re-open
+          sectorCounter.add(entry.sector); // same-scan correlated exposure accrues toward the cap
         }
       }
     } catch (werr) {
