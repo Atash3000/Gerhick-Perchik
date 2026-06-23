@@ -313,8 +313,9 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
       return items;
     },
 
-    // Latest OPEN research outcome for a ticker (links a /bought or /skip to its
-    // source signal). Small table → prefix+status scan; picks the highest sk.
+    // Latest OPEN research outcome for a ticker (used to link a manual /bought
+    // position — or a /skip decision — to its source signal). Small table →
+    // prefix+status scan; picks the highest sk.
     // TODO(#46): replace the scan with a TICKER#/STATUS# GSI Query if outcomes grow.
     async findLatestOpenOutcome(ticker) {
       const prefix = `SIGNAL#${ticker}#`;
@@ -347,6 +348,8 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
 
     // The single OPEN position header for a ticker (v1: at most one). null if none.
     async getOpenPosition(ticker) {
+      // v1: at most one OPEN header per ticker and few events per pk, so a single
+      // Query page suffices; revisit pagination if a ticker's POSITION# pk grows large.
       const out = await doc.send(
         new QueryCommand({
           TableName: posTable,
@@ -391,12 +394,15 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
       const { event, updatedFields } = sellResult;
       const sets = [];
       const names = {};
-      const values = { ":expected": header.remainingShares };
+      const values = {};
       for (const [k, v] of Object.entries(updatedFields)) {
         sets.push(`#${k} = :${k}`);
         names[`#${k}`] = k;
         values[`:${k}`] = v;
       }
+      // Seed the optimistic-lock sentinel AFTER the loop so an updatedFields key
+      // named "expected" can never clobber it.
+      values[":expected"] = header.remainingShares;
       await doc.send(
         new TransactWriteCommand({
           TransactItems: [
