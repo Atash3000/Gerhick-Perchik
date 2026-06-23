@@ -179,10 +179,11 @@ research outcomes.
 - The control Lambda already holds `DynamoDBReadPolicy` on `OutcomesTable`; no new
   read grant is needed.
 
-**TODO (do NOT build in v1 unless needed):** if outcomes grow, add a GSI for
+**TODO — tracked as GitHub Issue #46 (do NOT build in v1 unless needed):** if
+outcomes grow (43 → 200 → 500 names), the Scan gets ugly; add a GSI for
 ticker/status lookup instead of scanning:
-`GSI1PK = TICKER#<ticker>`, `GSI1SK = STATUS#<status>#<entryEpoch>`.
-Track as a GitHub Issue.
+`GSI1PK = TICKER#<ticker>`, `GSI1SK = STATUS#<status>#<entryEpoch>`,
+turning the lookup into a `Query` with `Limit: 1`.
 
 ---
 
@@ -291,9 +292,9 @@ shares / positive price). Deterministic via injected id + timestamps.
 
 ## Follow-up Issues to open
 
-1. **GSI for ticker/status outcome lookup** — only if `gp-outcomes` grows enough
-   that the linkage `Scan` becomes costly (`GSI1PK=TICKER#<ticker>`,
-   `GSI1SK=STATUS#<status>#<entryEpoch>`).
+1. **GSI for ticker/status outcome lookup** — **tracked as Issue #46.** Only if
+   `gp-outcomes` grows enough that the linkage `Scan` becomes costly
+   (`GSI1PK=TICKER#<ticker>`, `GSI1SK=STATUS#<status>#<entryEpoch>`).
 2. **Scale-ins** — allow a second `/bought` to add to an OPEN position (recompute
    `avgEntryPrice` across buy events). Schema already accommodates it.
 3. **Unrealized P/L in `/positions`** — needs a latest-price lookup
