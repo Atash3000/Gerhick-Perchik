@@ -55,6 +55,20 @@ export function snapshotMetrics(md) {
   const breakout55 =
     typeof m.high55d === "number" && typeof m.close === "number" ? m.close > m.high55d : null;
 
+  // Level distances in ATR units (capture-only, Phase 8 analysis). Positive =
+  // support below / resistance above price. null when the level or a valid ATR is
+  // absent (e.g. resistance is null for an all-time-high breakout — itself a signal).
+  const r3 = (v) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v * 1000) / 1000 : null);
+  const atrPos = typeof m.atr === "number" && m.atr > 0;
+  const distanceToSupportAtr =
+    atrPos && typeof m.close === "number" && typeof m.nearestSupport?.price === "number"
+      ? r3((m.close - m.nearestSupport.price) / m.atr)
+      : null;
+  const distanceToResistanceAtr =
+    atrPos && typeof m.close === "number" && typeof m.nearestResistance?.price === "number"
+      ? r3((m.nearestResistance.price - m.close) / m.atr)
+      : null;
+
   return {
     rsi: r2(m.rsi),
     ma50: r2(m.ma50),
@@ -84,6 +98,8 @@ export function snapshotMetrics(md) {
     ma200Rising,
     breakout20, // close > prior 20-day high
     breakout55, // close > prior 55-day high
+    distanceToSupportAtr, // (close − support) / ATR; null if no support/ATR
+    distanceToResistanceAtr, // (resistance − close) / ATR; null if no resistance (ATH) / ATR
   };
 }
 
@@ -99,9 +115,20 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
     // One daily snapshot per scored name. `asOf` (YYYY-MM-DD) is the trading day
     // the row is keyed to — the data's dataAsOf, with a caller-supplied fallback
     // for the NO_DATA case where the result has none.
-    async writeSnapshot(result, { asOf, sector = null, marketData = null, fundamentals = null } = {}) {
+    async writeSnapshot(result, { asOf, sector = null, marketData = null, fundamentals = null, sectorStrengthPct = null } = {}) {
       const day = result.dataAsOf ?? asOf;
       if (!day) throw new Error(`cannot snapshot ${result.ticker}: no as-of date`);
+      // Per-share risk/reward in price terms (capture-only denormalization; R:R is
+      // their ratio). null when levels weren't derived (a gate rejected pre-levels).
+      const round2 = (v) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
+      const riskPerShare =
+        typeof result.entry === "number" && typeof result.stop === "number"
+          ? round2(result.entry - result.stop)
+          : null;
+      const rewardPerShare =
+        typeof result.entry === "number" && typeof result.target === "number"
+          ? round2(result.target - result.entry)
+          : null;
       const item = {
         pk: `TICKER#${result.ticker}`,
         sk: epochDay(day),
@@ -116,6 +143,11 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
         stop: result.stop ?? null,
         target: result.target ?? null,
         riskReward: result.riskReward ?? null,
+        riskPerShare, // entry − stop (price); null if no levels
+        rewardPerShare, // target − entry (price); null if no levels
+        // gp-2.0.0 sectorStrength INPUT (the raw cross-sectional percentile, not the
+        // scored component). Captured for Phase 8 analysis; null when sector < 3 names.
+        sectorStrengthPct: typeof sectorStrengthPct === "number" ? sectorStrengthPct : null,
         // Target-derivation metadata (ATR-projected floor) for target-type analysis.
         targetType: result.targetType ?? null,
         projectedTarget: result.projectedTarget ?? null,

@@ -230,6 +230,7 @@ export async function handler(event) {
     try {
       await store.writeSnapshot(result, {
         asOf: regime.asOf, sector: entry.sector, marketData: md, fundamentals,
+        sectorStrengthPct: marketContext.sectorStrengthPct,
       });
       snapshotsWritten += 1;
       if (newEntry) {
