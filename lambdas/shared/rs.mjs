@@ -17,13 +17,42 @@ export function rsRaw(md) {
   return round(2 * r63 + r126 + r252, 2);
 }
 
-// Relative strength vs SPY over the 126d window (the name's return minus SPY's).
-// null if either is unavailable.
+// Generic relative strength vs SPY for ONE period: the name's return minus SPY's.
+// null if either is missing/non-finite. The per-period rs{21,63,126,252}VsSpy
+// fields are all this, fed the matching stock/SPY return.
+export function rsDelta(stockReturn, spyReturn) {
+  if (typeof stockReturn !== "number" || !Number.isFinite(stockReturn)) return null;
+  if (typeof spyReturn !== "number" || !Number.isFinite(spyReturn)) return null;
+  return round(stockReturn - spyReturn, 2);
+}
+
+// Relative strength vs SPY over the 126d window — the 126d special case of rsDelta,
+// kept as a back-compat alias for the stored `rsVsSpy` (== rs126VsSpy).
 export function rsVsSpy(md, spyReturn126d) {
-  const a = md?.return126d;
-  if (typeof a !== "number" || !Number.isFinite(a)) return null;
-  if (typeof spyReturn126d !== "number" || !Number.isFinite(spyReturn126d)) return null;
-  return round(a - spyReturn126d, 2);
+  return rsDelta(md?.return126d, spyReturn126d);
+}
+
+// Capture-only SPY trend/return context recorded on every daily snapshot, built from
+// a single getMarketData("SPY"). above50/above200 are DERIVED (we do not also store
+// the redundant below200ma). Missing inputs → null (never undefined). Pure.
+export function spyContext(spy) {
+  const s = spy ?? {};
+  const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const close = num(s.close);
+  const ma50 = num(s.ma50);
+  const ma200 = num(s.ma200);
+  return {
+    close,
+    ma50,
+    ma200,
+    rsi: num(s.rsi),
+    return21d: num(s.return21d),
+    return63d: num(s.return63d),
+    return126d: num(s.return126d),
+    return252d: num(s.return252d),
+    above50: close != null && ma50 != null ? close > ma50 : null,
+    above200: close != null && ma200 != null ? close > ma200 : null,
+  };
 }
 
 // Percentile-rank a set of {key, value} pairs into 1-99. Items with a null/non-

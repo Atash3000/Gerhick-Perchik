@@ -19,7 +19,7 @@ import { DynamoDBDocumentClient, ScanCommand } from "@aws-sdk/lib-dynamodb";
 import { getActiveConfig } from "../shared/config.mjs";
 import { getMarketData, getCompanyProfile, KEY_PATHS } from "../shared/marketdata.mjs";
 import { getFundamentals } from "../shared/fundamentals.mjs";
-import { rsRaw, rsVsSpy, rankPercentiles, sectorStrengthPercentiles } from "../shared/rs.mjs";
+import { rsRaw, rsVsSpy, rsDelta, spyContext, rankPercentiles, sectorStrengthPercentiles } from "../shared/rs.mjs";
 import { score, DECISION } from "../shared/scoring.mjs";
 import { createStore } from "../shared/store.mjs";
 import { buildPayload, narrate, composeRichMessage, FALLBACK_NARRATION } from "../shared/narration.mjs";
@@ -135,6 +135,9 @@ async function getMarketRegime() {
     spyBelow200ma: spy.close < spy.ma200,
     asOf: spy.dataAsOf,
     spyReturn126d: spy.return126d ?? null,
+    // Full capture-only SPY context (trend state + all return windows) stored on
+    // every snapshot, and the source for the per-period rs{N}VsSpy deltas below.
+    spy: spyContext(spy),
   };
 }
 
@@ -214,7 +217,13 @@ export async function handler(event) {
   // the snapshot/outcome for later analysis; NOT used in scoring.
   for (const g of gathered) {
     g.md.rsRaw = rsRaw(g.md);
-    g.md.rsVsSpy = rsVsSpy(g.md, regime.spyReturn126d);
+    g.md.rsVsSpy = rsVsSpy(g.md, regime.spyReturn126d); // back-compat alias (== rs126VsSpy)
+    // Per-period relative strength vs SPY (capture-only): the name's return minus
+    // SPY's over each window. Both halves already computed; this is the subtraction.
+    g.md.rs21VsSpy = rsDelta(g.md.return21d, regime.spy?.return21d);
+    g.md.rs63VsSpy = rsDelta(g.md.return63d, regime.spy?.return63d);
+    g.md.rs126VsSpy = rsDelta(g.md.return126d, regime.spy?.return126d);
+    g.md.rs252VsSpy = rsDelta(g.md.return252d, regime.spy?.return252d);
   }
   const rsRankMap = rankPercentiles(gathered.map((g) => ({ key: g.entry.ticker, value: g.md.rsRaw })));
   for (const g of gathered) g.md.rsRank = rsRankMap.get(g.entry.ticker) ?? null;
@@ -251,7 +260,7 @@ export async function handler(event) {
     try {
       await store.writeSnapshot(result, {
         asOf: regime.asOf, sector: entry.sector, marketData: md, fundamentals,
-        sectorStrengthPct: marketContext.sectorStrengthPct,
+        sectorStrengthPct: marketContext.sectorStrengthPct, spy: regime.spy,
       });
       snapshotsWritten += 1;
       if (newEntry) {

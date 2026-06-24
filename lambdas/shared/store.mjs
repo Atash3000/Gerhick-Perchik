@@ -104,7 +104,12 @@ export function snapshotMetrics(md) {
     // Relative strength (capture-only, cross-sectional; not scored):
     rsRaw: m.rsRaw ?? null,
     rsRank: m.rsRank ?? null,
-    rsVsSpy: m.rsVsSpy ?? null,
+    rsVsSpy: m.rsVsSpy ?? null, // back-compat alias for rs126VsSpy
+    // Per-period relative strength vs SPY (capture-only; attached in scanner pass 1).
+    rs21VsSpy: m.rs21VsSpy ?? null,
+    rs63VsSpy: m.rs63VsSpy ?? null,
+    rs126VsSpy: m.rs126VsSpy ?? null,
+    rs252VsSpy: m.rs252VsSpy ?? null,
     // Store the FULL level, not just the price — touches/strength/brokenSupport are
     // the most "Gerchik" signal (touch count especially) and are needed for both the
     // alert's Gerchik Level line and Phase 8 outcome analysis. null when no level.
@@ -134,7 +139,7 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
     // One daily snapshot per scored name. `asOf` (YYYY-MM-DD) is the trading day
     // the row is keyed to — the data's dataAsOf, with a caller-supplied fallback
     // for the NO_DATA case where the result has none.
-    async writeSnapshot(result, { asOf, sector = null, marketData = null, fundamentals = null, sectorStrengthPct = null } = {}) {
+    async writeSnapshot(result, { asOf, sector = null, marketData = null, fundamentals = null, sectorStrengthPct = null, spy = null } = {}) {
       const day = result.dataAsOf ?? asOf;
       if (!day) throw new Error(`cannot snapshot ${result.ticker}: no as-of date`);
       // Per-share risk/reward in price terms (capture-only denormalization; R:R is
@@ -178,6 +183,10 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
         metrics: snapshotMetrics(marketData),
         // Capture-only O'Neil fundamentals (not scored). null when unavailable.
         fundamentals: fundamentals ?? null,
+        // Capture-only market context: SPY trend state + returns the day this name
+        // was scored (same for every snapshot that day). Powers "is it stronger than
+        // the market?" and regime-conditioned outcome analysis in Phase 8.
+        spy: spy ?? null,
         sector,
         scannedAt: new Date().toISOString(),
       };
