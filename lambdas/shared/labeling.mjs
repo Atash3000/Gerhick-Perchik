@@ -62,10 +62,16 @@ export function labelSignal(signal, bars, config) {
   let hitStopFirst = false;
   let hitTargetFirst = false;
   let daysHeld = 0;
+  // Excursion tracking: how far price ranged in our favor / against us over the
+  // bars actually held, INCLUSIVE of the exit bar (updated before the break checks).
+  let maxHigh = -Infinity;
+  let minLow = Infinity;
 
   for (let i = 0; i < forward.length; i++) {
     const bar = forward[i];
     daysHeld = i + 1;
+    if (bar.high > maxHigh) maxHigh = bar.high;
+    if (bar.low < minLow) minLow = bar.low;
 
     // Gap-OPEN above target: a resting target sell fills at the open, before any
     // intraday move could reach the stop — so the target is hit first even if the
@@ -111,6 +117,12 @@ export function labelSignal(signal, bars, config) {
   const costPct = (2 * (feeBps + slippageBps)) / 100; // bps→% : /100; two sides : ×2
   const profitPct = round(grossPct - costPct, 4);
 
+  // Maximum favorable / adverse excursion, in percent from entry (split-invariant
+  // ratios, like profitPct). MFE = best high reached; MAE = worst low reached.
+  // Gross (no costs) — these measure price travel, not realized P&L.
+  const mfePct = round((maxHigh / entryAdj - 1) * 100, 2);
+  const maePct = round((minLow / entryAdj - 1) * 100, 2);
+
   return {
     outcome,
     hitStopFirst,
@@ -119,6 +131,10 @@ export function labelSignal(signal, bars, config) {
     exitDate,
     daysHeld,
     profitPct,
+    mfePct, // max favorable excursion %: highest high over the hold
+    maePct, // max adverse excursion %: lowest low over the hold
+    mfePrice: round(maxHigh, 4),
+    maePrice: round(minLow, 4),
     ...audit,
   };
 }

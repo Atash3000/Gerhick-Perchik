@@ -76,6 +76,11 @@ export async function handler() {
         exitPrice: label.exitPrice,
         profitPct: label.profitPct, // after cost
         daysHeld: label.daysHeld,
+        // Excursion (stop-tuning): how far price ranged for/against before exit.
+        mfePct: label.mfePct,
+        maePct: label.maePct,
+        mfePrice: label.mfePrice,
+        maePrice: label.maePrice,
         // Split re-anchor audit (see labeling.mjs):
         scaleFactor: label.scaleFactor,
         splitAdjusted: label.splitAdjusted,
