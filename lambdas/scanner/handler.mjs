@@ -297,7 +297,12 @@ export async function handler(event) {
           flavor = FALLBACK_NARRATION;
           console.error(`gp_scan_failed: narrate ${entry.ticker}: ${nerr.message}`);
         }
-        await sendTelegram(composeRichMessage(result, md, config, config.alertMode, flavor));
+        await sendTelegram(
+          composeRichMessage(result, md, config, config.alertMode, flavor, {
+            fundamentals,
+            sectorStrengthPct: marketContext.sectorStrengthPct,
+          })
+        );
         alertsSent += 1;
       } catch (aerr) {
         alertErrors += 1;
