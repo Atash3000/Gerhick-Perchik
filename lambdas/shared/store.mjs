@@ -41,6 +41,19 @@ export function snapshotMetrics(md) {
   // marketData now carries full-precision decision fields; round here, at the
   // persistence boundary, so stored snapshots stay clean (display-only rounding).
   const r2 = (v) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v * 100) / 100 : v ?? null);
+  // Serialize a support/resistance level for storage: price (2dp) + the full Gerchik
+  // structure (touches, strength, brokenSupport). Missing sub-fields → null (never
+  // undefined, which DynamoDB rejects). No level → null.
+  const r4 = (v) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v * 10000) / 10000 : null);
+  const level = (lv) =>
+    lv && typeof lv.price === "number"
+      ? {
+          price: r2(lv.price),
+          touches: typeof lv.touches === "number" ? lv.touches : null,
+          strength: r4(lv.strength),
+          brokenSupport: typeof lv.brokenSupport === "boolean" ? lv.brokenSupport : null,
+        }
+      : null;
   const volumeRatio =
     typeof m.volume === "number" && m.avgVolume30 > 0
       ? Math.round((m.volume / m.avgVolume30) * 100) / 100
@@ -92,8 +105,11 @@ export function snapshotMetrics(md) {
     rsRaw: m.rsRaw ?? null,
     rsRank: m.rsRank ?? null,
     rsVsSpy: m.rsVsSpy ?? null,
-    nearestSupport: m.nearestSupport?.price ?? null,
-    nearestResistance: m.nearestResistance?.price ?? null,
+    // Store the FULL level, not just the price — touches/strength/brokenSupport are
+    // the most "Gerchik" signal (touch count especially) and are needed for both the
+    // alert's Gerchik Level line and Phase 8 outcome analysis. null when no level.
+    nearestSupport: level(m.nearestSupport),
+    nearestResistance: level(m.nearestResistance),
     daysToEarnings: m.daysToEarnings ?? null,
     // Derived booleans for tuning analysis:
     minerviniAligned, // 50>150>200
