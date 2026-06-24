@@ -207,3 +207,44 @@ test("spyBenchmark returns nulls when SPY data is unavailable", () => {
 });
 
 function round4(n) { return Math.round(n * 1e4) / 1e4; }
+
+// --- MFE / MAE (maximum favorable / adverse excursion) ---
+// Tracks how far price ranged in your favor / against you over the held bars
+// (inclusive of the exit bar), not just the realized exit. Powers stop tuning:
+// "winners' MAE is only -1.8% → tighten the stop and size up."
+test("MFE/MAE: TARGET trade records best high and worst low over the hold", () => {
+  const bars = [
+    b("2026-06-19", 101, 105, 98, 104),  // high 105, low 98
+    b("2026-06-22", 106, 112, 105, 111), // high 112 (MFE), target hit
+  ];
+  const r = labelSignal(SIGNAL, bars, CONFIG);
+  assert.equal(r.outcome, OUTCOME.TARGET);
+  assert.equal(r.mfePct, 12);   // (112/100 - 1) * 100
+  assert.equal(r.maePct, -2);   // (98/100 - 1) * 100
+  assert.equal(r.mfePrice, 112);
+  assert.equal(r.maePrice, 98);
+});
+
+test("MFE/MAE: STOP trade — adverse excursion reaches below the stop (the exit bar counts)", () => {
+  const bars = [
+    b("2026-06-19", 101, 104, 99, 100), // high 104 (MFE), low 99
+    b("2026-06-22", 99, 100, 96, 97),   // low 96 ≤ stop → STOP; 96 is the worst low
+  ];
+  const r = labelSignal(SIGNAL, bars, CONFIG);
+  assert.equal(r.outcome, OUTCOME.STOP);
+  assert.equal(r.mfePct, 4);    // (104/100 - 1) * 100
+  assert.equal(r.maePct, -4);   // (96/100 - 1) * 100
+});
+
+test("MFE/MAE: TIMEOUT trade ranges over the whole window", () => {
+  const bars = [
+    b("2026-06-19", 100, 106, 99, 101),
+    b("2026-06-22", 101, 108, 100, 102), // 108 = best high
+    b("2026-06-23", 102, 104, 95, 96),   // 95 = worst low (no stop: stop is 97? 95<=97 → STOP!)
+  ];
+  // NOTE: 95 <= stop 97 → this is actually a STOP on day 3, not a timeout.
+  const r = labelSignal(SIGNAL, bars, CONFIG);
+  assert.equal(r.outcome, OUTCOME.STOP);
+  assert.equal(r.mfePct, 8);   // best high 108
+  assert.equal(r.maePct, -5);  // worst low 95
+});

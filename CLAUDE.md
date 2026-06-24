@@ -186,6 +186,10 @@ else after timeout    -> TIMEOUT (exit = last close)
   and `slippageBps` (from `gp-config`) per side. A cost-free backtest lies upward.
 - Record `outcome`, `hitTargetFirst`, `hitStopFirst`, `exitDate`, `profitPct`
   (after cost), `daysHeld`, the original `breakdown`, and `strategyVersion`.
+- Also record **MFE/MAE** (`mfePct`/`maePct`, gross % from entry, with `mfePrice`/
+  `maePrice`): the best high and worst low reached over the held bars (inclusive of
+  the exit bar). These measure price travel, NOT realized P&L, and drive stop tuning
+  (e.g. "winners' MAE is only −1.8% → tighten the stop and size up").
 
 ---
 
