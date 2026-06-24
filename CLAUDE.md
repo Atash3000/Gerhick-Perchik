@@ -134,9 +134,16 @@ key (that silently overwrites — do not repeat that class of bug).
   each run.
 - **Gates first — reject, don't score:** price > 200MA; R:R ≥ `minRiskReward`;
   target above price; no HIGH news; earnings not within 3 days; SPY not below
-  200MA; correlated-position cap (`maxCorrelatedPositions`, by `sector`). Fail any
-  gate → no signal, full stop. (Note: there is no longer a "no resistance → reject"
-  gate — see the target-derivation rule below.)
+  200MA; correlated-position cap (`maxCorrelatedPositions`, by `sector`);
+  **liquidity** (tradability filter — `close ≥ minPrice` AND average DOLLAR volume
+  `close × avgVolume30 ≥ minAvgDollarVolume30`; code defaults `$10` / `$50M`,
+  overridable via gp-config). Fail any gate → no signal, full stop. (Note: there is
+  no longer a "no resistance → reject" gate — see the target-derivation rule below.)
+  The liquidity GATE is a tradability filter and is distinct from the volume SCORE
+  (current participation vs the name's own average) — keep both. Snapshots store
+  `avgDollarVolume30` and `liquidityPass`. **Adding/activating this gate is a
+  decision-logic change → it requires a human `STRATEGY_VERSION` bump (never the
+  agent).**
 - **Derive levels — never type them in:** `stop = entry − atrStopMultiple×ATR`;
   `target = max(nearest resistance above entry, entry + targetAtrMultiple×ATR)`. R:R
   is the _result_, so it can't be gamed. The result carries `targetType`

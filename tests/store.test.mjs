@@ -97,6 +97,26 @@ test("writeSnapshot stores the FULL support/resistance level, not just the price
   assert.equal(Item.metrics.nearestResistance.brokenSupport, false);
 });
 
+test("writeSnapshot stores avgDollarVolume30 (metrics) and liquidityPass (from gates)", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });
+  const md = { close: 239.63, avgVolume30: 1_646_763, atr: 2 };
+  const res = { ...buyResult, gates: { liquidity: true, trend: true } };
+  await store.writeSnapshot(res, { asOf: "2026-06-18", marketData: md });
+  const { Item } = client.calls[0];
+  assert.equal(Item.metrics.avgDollarVolume30, Math.round(239.63 * 1_646_763)); // ~394.6M
+  assert.equal(Item.liquidityPass, true);
+});
+
+test("writeSnapshot: no gates / no volume → liquidityPass null, avgDollarVolume30 null", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });
+  await store.writeSnapshot({ ...buyResult, gates: null }, { asOf: "2026-06-18", marketData: { close: 50, atr: 1 } });
+  const { Item } = client.calls[0];
+  assert.equal(Item.metrics.avgDollarVolume30, null);
+  assert.equal(Item.liquidityPass, null);
+});
+
 test("writeSnapshot stores per-period RS-vs-SPY (from md) and the SPY context block", async () => {
   const client = fakeClient();
   const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });

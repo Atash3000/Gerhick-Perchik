@@ -384,3 +384,31 @@ test("setup score ignores a support that is not below price", () => {
   assert.equal(r.decision, DECISION.BUY_CANDIDATE); // resistance 110 still a valid target
   assert.equal(r.breakdown.setup, 4); // reward-room only; no support proximity/strength credit
 });
+
+// --- Liquidity gate (tradability filter; distinct from the volume SCORE) ---
+test("GATE liquidity: price below minPrice → NO_SIGNAL", () => {
+  const md = { ...baseMarketData(), close: 5, avgVolume30: 20_000_000 }; // $ADV 100M ok, price 5 < 10
+  const r = score(md, CONFIG, cleanContext);
+  assert.equal(r.decision, DECISION.NO_SIGNAL);
+  assert.equal(r.gates.liquidity, false);
+});
+
+test("GATE liquidity: dollar volume below threshold → NO_SIGNAL", () => {
+  const md = { ...baseMarketData(), close: 100, avgVolume30: 100_000 }; // $ADV 10M < 50M default
+  const r = score(md, CONFIG, cleanContext);
+  assert.equal(r.decision, DECISION.NO_SIGNAL);
+  assert.equal(r.gates.liquidity, false);
+});
+
+test("GATE liquidity: liquid name passes (close*avgVolume30 ≥ 50M, price ≥ 10)", () => {
+  const r = score(baseMarketData(), CONFIG, cleanContext); // $ADV = 100*1M = 100M
+  assert.equal(r.gates.liquidity, true);
+  assert.notEqual(r.decision, DECISION.NO_SIGNAL);
+});
+
+test("GATE liquidity: config override tightens the dollar-volume threshold", () => {
+  const strict = { ...CONFIG, minAvgDollarVolume30: 200_000_000 };
+  const r = score(baseMarketData(), strict, cleanContext); // $ADV 100M < 200M
+  assert.equal(r.decision, DECISION.NO_SIGNAL);
+  assert.equal(r.gates.liquidity, false);
+});

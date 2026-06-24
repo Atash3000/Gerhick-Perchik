@@ -344,6 +344,11 @@ export function composeRichMessage(result, md, config, mode, narration, extras =
   if (typeof m.low52 === "number" && typeof m.high52 === "number") {
     lines.push(`52W Range: $${money(m.low52)} – $${money(m.high52)}`);
   }
+  // Liquidity = average DOLLAR volume (close × avgVolume30) — tradability, distinct
+  // from the volume×-avg participation line below.
+  if (m.close > 0 && m.avgVolume30 > 0) {
+    lines.push(`Liquidity: ${formatMarketCap((m.close * m.avgVolume30) / 1e6)} avg dollar volume`);
+  }
 
   // Technicals — trend line is DERIVED from the MAs (not hardcoded).
   lines.push("", "📈 Technicals");
