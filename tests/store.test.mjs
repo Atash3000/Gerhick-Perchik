@@ -97,6 +97,31 @@ test("writeSnapshot stores the FULL support/resistance level, not just the price
   assert.equal(Item.metrics.nearestResistance.brokenSupport, false);
 });
 
+test("writeSnapshot stores per-period RS-vs-SPY (from md) and the SPY context block", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });
+  const md = { close: 100, atr: 2, rsVsSpy: 37.1, rs21VsSpy: 13.2, rs63VsSpy: 24.8, rs126VsSpy: 37.1, rs252VsSpy: 55.9 };
+  const spy = { close: 690.22, ma50: 675.11, ma200: 620.33, rsi: 62.4, return21d: 4.1, return63d: 9.2, return126d: 12, return252d: 20.5, above50: true, above200: true };
+  await store.writeSnapshot(buyResult, { asOf: "2026-06-18", marketData: md, spy });
+  const { Item } = client.calls[0];
+  assert.equal(Item.metrics.rs21VsSpy, 13.2);
+  assert.equal(Item.metrics.rs63VsSpy, 24.8);
+  assert.equal(Item.metrics.rs126VsSpy, 37.1);
+  assert.equal(Item.metrics.rs252VsSpy, 55.9);
+  assert.equal(Item.metrics.rsVsSpy, 37.1); // back-compat alias retained
+  assert.deepEqual(Item.spy, spy);
+});
+
+test("writeSnapshot: no md RS deltas / no spy → nulls, never undefined", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });
+  await store.writeSnapshot(buyResult, { asOf: "2026-06-18", marketData: { close: 50, atr: 1 } });
+  const { Item } = client.calls[0];
+  assert.equal(Item.metrics.rs21VsSpy, null);
+  assert.equal(Item.metrics.rs252VsSpy, null);
+  assert.equal(Item.spy, null);
+});
+
 test("writeSnapshot: missing level fields → nulls (never undefined); no level → null", async () => {
   const client = fakeClient();
   const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });

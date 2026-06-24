@@ -1,6 +1,40 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { rsRaw, rsVsSpy, rankPercentiles, sectorStrengthPercentiles } from "../lambdas/shared/rs.mjs";
+import { rsRaw, rsVsSpy, rsDelta, spyContext, rankPercentiles, sectorStrengthPercentiles } from "../lambdas/shared/rs.mjs";
+
+test("rsDelta = stock return minus SPY return; null when either missing", () => {
+  assert.equal(rsDelta(18, 5), 13);
+  assert.equal(rsDelta(-3, 5), -8);
+  assert.equal(rsDelta(10, null), null);
+  assert.equal(rsDelta(null, 5), null);
+  assert.equal(rsDelta(10, NaN), null);
+});
+
+test("rsVsSpy stays the 126d special case of rsDelta", () => {
+  assert.equal(rsVsSpy({ return126d: 37.1 }, 12), 25.1);
+  assert.equal(rsVsSpy({ return126d: null }, 12), null);
+});
+
+test("spyContext captures SPY trend + returns; derives above50/above200", () => {
+  const ctx = spyContext({ close: 690.22, ma50: 675.11, ma200: 620.33, rsi: 62.4, return21d: 4.1, return63d: 9.2, return126d: 12, return252d: 20.5 });
+  assert.equal(ctx.close, 690.22);
+  assert.equal(ctx.above50, true);
+  assert.equal(ctx.above200, true);
+  assert.equal(ctx.rsi, 62.4);
+  assert.equal(ctx.return252d, 20.5);
+  assert.ok(!("below200ma" in ctx)); // no redundant inverse of above200
+});
+
+test("spyContext: below 50MA → above50 false; missing inputs → null (never undefined)", () => {
+  const ctx = spyContext({ close: 600, ma50: 675, ma200: 620 });
+  assert.equal(ctx.above50, false);
+  assert.equal(ctx.above200, false);
+  assert.equal(ctx.rsi, null);
+  const empty = spyContext(null);
+  assert.equal(empty.close, null);
+  assert.equal(empty.above200, null);
+  assert.equal(empty.return21d, null);
+});
 
 test("rsRaw = 2*return63d + return126d + return252d", () => {
   assert.equal(rsRaw({ return63d: 10, return126d: 20, return252d: 30 }), 70); // 20+20+30
