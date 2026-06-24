@@ -190,46 +190,129 @@ const BREAKDOWN_ROWS = [
   ["Empirical Edge", "empiricalEdge"],
 ];
 
-const TARGET_TYPE_LABELS = {
-  RESISTANCE: "Resistance target",
-  PROJECTED_ATR: "Projected ATR target",
-  RESISTANCE_FLOORED_BY_PROJECTED_ATR: "Resistance too close → ATR floor",
-};
-
 // Signed YoY growth %, one decimal. Non-number → "N/A".
 function growthPct(n) {
   if (typeof n !== "number" || !Number.isFinite(n)) return "N/A";
   return `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
 }
 
-// Show a breakdown value without forcing integer rounding (so the visible rows
-// still sum to the displayed score). Trims trailing zeros: 15.0→"15", 7.50→"7.5".
-function trimNum(n) {
-  return String(Number(n.toFixed(2)));
+// One-decimal display for a number (score/RSI/R:R). Non-number → "n/a".
+function fixed1(n) {
+  return typeof n === "number" && Number.isFinite(n) ? n.toFixed(1) : "n/a";
 }
 
+// --- Alert v2.1 helpers (trader's briefing) --------------------------------
+
+// Score → quality-tier badge. SCORE-derived (not the manual watchlist qualityTier),
+// so 20 alerts in Telegram read as A+/A/B/C at a glance.
+export function qualityTier(score) {
+  if (typeof score !== "number" || !Number.isFinite(score)) return { letter: "?", emoji: "▫️" };
+  if (score >= 80) return { letter: "A+", emoji: "🅰️" };
+  if (score >= 70) return { letter: "A", emoji: "🅰️" };
+  if (score >= 60) return { letter: "B", emoji: "🅱️" };
+  return { letter: "C", emoji: "🅲" };
+}
+
+// Trend line DERIVED from the actual MAs. Replaces the old hardcoded literal that
+// asserted "above 50MA & 200MA" even for names below their 50MA — the gate only
+// guarantees close > ma200, so this states what is actually true.
+export function trendText(md = {}) {
+  const { close, ma50, ma200 } = md;
+  if (![close, ma50, ma200].every((v) => typeof v === "number" && Number.isFinite(v))) {
+    return "data unavailable";
+  }
+  const above200 = close > ma200;
+  const above50 = close > ma50;
+  if (above50 && above200) return "Above 50MA & 200MA ✓";
+  if (above200) return "Above 200MA ✓ · below 50MA ⚠️";
+  if (above50) return "Above 50MA ✓ · below 200MA ⚠️";
+  return "Below 50MA & 200MA ⚠️";
+}
+
+const TARGET_TYPE_BADGES = {
+  RESISTANCE: "🟢 Resistance",
+  PROJECTED_ATR: "🟡 Projected ATR",
+  RESISTANCE_FLOORED_BY_PROJECTED_ATR: "🟠 ATR Floor",
+};
+
+// Make the target derivation visually obvious in the Gerchik Level section.
+export function targetTypeBadge(targetType) {
+  return TARGET_TYPE_BADGES[targetType] ?? "—";
+}
+
+// Deterministic "why it scored high" bullets — only factors that are actually
+// strong fire, so weak names show fewer. Order: RS, EPS, revenue, sector, trend, volume.
+export function buildWhyScoredHigh(result, md = {}, extras = {}) {
+  const out = [];
+  const f = extras.fundamentals ?? null;
+
+  const rs = md.rsRank;
+  if (typeof rs === "number") {
+    if (rs >= 90) out.push(`Top-decile RS Rank (${rs})`);
+    else if (rs >= 80) out.push(`Top-quintile RS Rank (${rs})`);
+    else if (rs >= 70) out.push(`Strong RS Rank (${rs})`);
+  }
+  const eps = f?.epsGrowthQtr;
+  if (typeof eps === "number") {
+    if (eps >= 50) out.push(`Exceptional EPS growth (${growthPct(eps)})`);
+    else if (eps >= 20) out.push(`Strong EPS growth (${growthPct(eps)})`);
+  }
+  const rev = f?.salesGrowthQtr;
+  if (typeof rev === "number" && rev >= 20) out.push(`Strong revenue growth (${growthPct(rev)})`);
+
+  const sec = extras.sectorStrengthPct;
+  if (typeof sec === "number") {
+    if (sec >= 70) out.push("Strong sector participation");
+    else if (sec >= 50) out.push("Constructive sector strength");
+  }
+  if (typeof md.close === "number" && typeof md.ma50 === "number" && typeof md.ma200 === "number") {
+    if (md.close > md.ma50 && md.close > md.ma200) out.push("Price above 50MA & 200MA");
+    else if (md.close > md.ma200) out.push("Price above 200MA");
+  }
+  const vr = md.avgVolume30 > 0 ? md.volume / md.avgVolume30 : null;
+  if (vr != null && vr >= 1.2) out.push("Elevated volume confirms interest");
+
+  return out.length ? out : ["Passed all entry gates"];
+}
+
+// Deterministic risk bullets, factor-aware.
+export function buildRiskBullets(result = {}, md = {}, config = {}) {
+  const out = [];
+  if (typeof md.rsi === "number") {
+    if (md.rsi > 70) out.push(`Overbought (RSI ${num2(md.rsi)})`);
+    else if (md.rsi < 55) out.push("RSI momentum is only moderate");
+  }
+  if (result.targetType === "PROJECTED_ATR") out.push("No nearby chart resistance available");
+  else if (result.targetType === "RESISTANCE_FLOORED_BY_PROJECTED_ATR") {
+    out.push("Nearest resistance very close (target uses ATR floor)");
+  }
+  if (typeof md.daysToEarnings === "number" && md.daysToEarnings >= 0 && md.daysToEarnings <= 15) {
+    out.push(`Earnings in ${md.daysToEarnings} days`);
+  }
+  if (!md.nearestSupport) out.push("No nearby support below price");
+  out.push("ATR-based stop may gap through overnight");
+  return out;
+}
+
+// Score Factors (4 metrics) + Factor Breakdown (9 rows, 1-decimal) + neutral note.
+// Target Type is NOT here — it now lives in the Gerchik Level badge. Pure.
 export function buildScoreFactors(result, md, extras = {}) {
   const m = md ?? {};
   const f = extras.fundamentals ?? null;
   const breakdown = result?.breakdown ?? null;
 
-  const lines = ["📊 Score Factors:"];
+  const lines = ["📊 Score Factors"];
   lines.push(`RS Rank: ${typeof m.rsRank === "number" ? `${m.rsRank}/99` : "N/A"}`);
   lines.push(`EPS Growth YoY: ${growthPct(f?.epsGrowthQtr)}`);
   lines.push(`Revenue Growth YoY: ${growthPct(f?.salesGrowthQtr)}`);
-  lines.push(
-    `Sector Strength: ${typeof extras.sectorStrengthPct === "number" ? `${extras.sectorStrengthPct}/99` : "N/A"}`
-  );
-  lines.push(`Target Type: ${TARGET_TYPE_LABELS[result?.targetType] ?? "N/A"}`);
+  lines.push(`Sector Strength: ${typeof extras.sectorStrengthPct === "number" ? `${extras.sectorStrengthPct}/99` : "N/A"}`);
 
-  lines.push("", "Factor Breakdown:");
+  lines.push("", "📋 Factor Breakdown");
   for (const [label, key] of BREAKDOWN_ROWS) {
     const v = typeof breakdown?.[key] === "number" ? breakdown[key] : 0;
-    const max = WEIGHTS[key];
-    const suffix = key === "empiricalEdge" ? " (neutral)" : "";
-    lines.push(`${label}: ${trimNum(v)}/${max}${suffix}`);
+    lines.push(`${label}: ${v.toFixed(1)} / ${WEIGHTS[key]}`);
   }
-  lines.push("ℹ️ Empirical Edge is neutral until enough outcomes exist.");
+  lines.push("", "ℹ️ Empirical Edge remains neutral until enough real outcomes accumulate.");
   return lines;
 }
 
@@ -239,12 +322,8 @@ export function buildScoreFactors(result, md, extras = {}) {
 // { fundamentals, sectorStrengthPct }. Pure.
 export function composeRichMessage(result, md, config, mode, narration, extras = {}) {
   const m = md ?? {};
-  const rangePct =
-    typeof m.low52 === "number" && typeof m.high52 === "number" && m.high52 > m.low52
-      ? Math.round(((m.close - m.low52) / (m.high52 - m.low52)) * 100)
-      : null;
   const volR = m.avgVolume30 > 0 ? (m.volume / m.avgVolume30).toFixed(1) : "—";
-  const { bullish, risks } = buildBullets(result, m, config);
+  const tier = qualityTier(result.score);
 
   const lines = [
     "🟢 GERCHIK-PERCHIK SIGNAL",
@@ -253,43 +332,59 @@ export function composeRichMessage(result, md, config, mode, narration, extras =
   if (mode !== "live") lines.push(OBSERVE_PREFIX, "");
   else lines.push("");
 
+  // Header — ticker, score, quality tier (3-second read).
   lines.push(`📊 ${result.ticker}${m.name ? ` — ${m.name}` : ""}`);
-  lines.push(`⬆️ LONG • Score: ${result.score}/100`);
+  lines.push(`⬆️ LONG • Score: ${fixed1(result.score)}/100 • ${tier.emoji} Tier ${tier.letter}`);
   if (m.sector) lines.push(`🏷 Sector: ${m.sector}`);
 
-  lines.push("", "💰 Market Context:");
-  lines.push(`Price: $${money(m.close)}${typeof m.pctChange === "number" ? ` (${m.pctChange >= 0 ? "+" : ""}${m.pctChange}%)` : ""}`);
+  // Market Context
+  lines.push("", "💰 Market Context");
+  lines.push(`Price: $${money(m.close)}`);
+  lines.push(`Market Cap: ${formatMarketCap(m.marketCapMillions)}`);
   if (typeof m.low52 === "number" && typeof m.high52 === "number") {
-    lines.push(`52w: $${money(m.low52)} – $${money(m.high52)}${rangePct != null ? ` (${rangePct}% of range)` : ""}`);
-  }
-  lines.push(`Market cap: ${formatMarketCap(m.marketCapMillions)}`);
-
-  lines.push("", "📈 Technicals:");
-  lines.push("Trend: above 50MA & 200MA ✓");
-  lines.push(`RSI(14): ${num2(m.rsi)}`);
-  if (m.nearestSupport) lines.push(`Support: $${money(m.nearestSupport.price)} (${m.nearestSupport.touches} touches)`);
-  lines.push(`Resistance: $${money(result.target)} (target)`);
-  lines.push(`ATR(14): $${money(m.atr)} • Vol: ${volR}× avg`);
-  // Compact trend-extension / volatility context (computed from existing fields).
-  if (m.ma200 > 0 && m.ma50 > 0) {
-    lines.push(`Distance >200MA: ${signedPct(m.close, m.ma200)}  ·  >50MA: ${signedPct(m.close, m.ma50)}`);
-  }
-  if (m.close > 0 && typeof m.atr === "number") {
-    lines.push(`ATR/Price: ${((m.atr / m.close) * 100).toFixed(1)}%`);
+    lines.push(`52W Range: $${money(m.low52)} – $${money(m.high52)}`);
   }
 
-  // Score Factors — why the score is what it is (visibility-only; no new math).
+  // Technicals — trend line is DERIVED from the MAs (not hardcoded).
+  lines.push("", "📈 Technicals");
+  lines.push(`Trend: ${trendText(m)}`);
+  lines.push(`RSI(14): ${fixed1(m.rsi)}`);
+
+  // Gerchik Level — the support/target heart of the strategy, front and center.
+  lines.push("", "🎯 Gerchik Level");
+  if (m.nearestSupport && typeof m.nearestSupport.price === "number") {
+    const t = m.nearestSupport.touches;
+    const touches = typeof t === "number" ? ` (${t} touches)` : ""; // never print "undefined touches"
+    lines.push(`Support: $${money(m.nearestSupport.price)}${touches}`);
+  } else if (typeof m.nearestSupport === "number") {
+    lines.push(`Support: $${money(m.nearestSupport)}`);
+  } else {
+    lines.push("Support: none nearby");
+  }
+  lines.push(`Target: $${money(result.target)} (${targetTypeBadge(result.targetType)})`);
+
+  // Volatility / extension context
+  lines.push("", `ATR(14): $${money(m.atr)}`);
+  lines.push(`Volume: ${volR}× avg`);
+  lines.push("");
+  if (m.ma200 > 0) lines.push(`Distance >200MA: ${signedPct(m.close, m.ma200)}`);
+  if (m.ma50 > 0) lines.push(`Distance >50MA: ${signedPct(m.close, m.ma50)}`);
+  if (m.close > 0 && typeof m.atr === "number") lines.push(`ATR/Price: ${((m.atr / m.close) * 100).toFixed(1)}%`);
+
+  // Score Factors + Factor Breakdown (1-decimal)
   lines.push("", ...buildScoreFactors(result, m, extras));
 
-  lines.push("", "💡 Thesis:", (narration ?? "").trim() || "Technical setup flagged by the scoring model.");
+  // Thesis (AI, locked) then deterministic "why it scored high".
+  lines.push("", "💡 Thesis", (narration ?? "").trim() || FALLBACK_NARRATION);
+  lines.push("", "💡 Why It Scored High", ...buildWhyScoredHigh(result, m, extras).map((b) => `• ${b}`));
+  lines.push("", "⚠️ Risks", ...buildRiskBullets(result, m, config).map((b) => `• ${b}`));
 
-  lines.push("", "✅ Bullish:", ...bullish.map((b) => `• ${b}`));
-  lines.push("", "⚠️ Risks:", ...risks.map((b) => `• ${b}`));
-
-  lines.push("", "🎯 Trade Plan:");
+  // Trade Plan
+  lines.push("", "🎯 Trade Plan");
   lines.push(`Entry: $${money(result.entry)}`);
   lines.push(`Stop: $${money(result.stop)} (${signedPct(result.stop, result.entry)})`);
-  lines.push(`Target: $${money(result.target)} (${signedPct(result.target, result.entry)}, ${result.riskReward}:1 R:R)`);
+  lines.push(`Target: $${money(result.target)} (${signedPct(result.target, result.entry)})`);
+  lines.push(`Risk/Reward: ${fixed1(result.riskReward)} : 1`);
   if (result.sizing) {
     lines.push(
       `Size: ${result.sizing.shares} shares ≈ $${money(result.sizing.notional)} • ` +
@@ -299,6 +394,6 @@ export function composeRichMessage(result, md, config, mode, narration, extras =
     lines.push("Size: — (position sizing not configured)");
   }
 
-  lines.push("", `📅 as of ${result.dataAsOf} · ${result.strategyVersion}`);
+  lines.push("", `📅 ${result.dataAsOf} · ${result.strategyVersion}`);
   return lines.join("\n");
 }
