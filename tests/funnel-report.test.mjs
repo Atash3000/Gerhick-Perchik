@@ -240,6 +240,15 @@ test("gate rejections render with friendly labels", () => {
   assert.match(t, /Below score:/);
 });
 
+test("liquidity gate rejections render under the friendly 'Liquidity' label", () => {
+  const snaps = [
+    snap({ ticker: "ILQ", decision: "NO_SIGNAL", reason: "illiquid",
+      gates: { marketRegime: true, news: true, liquidity: false } }),
+  ];
+  const t = build({ snapshots: snaps }).text;
+  assert.match(t, /Liquidity: 1/);
+});
+
 test("Top Sectors section omitted when there are 0 candidates", () => {
   const noCands = [
     snap({ ticker: "C", decision: "NO_SIGNAL", reason: "trend", gates: { marketRegime: true, news: true, earnings: true, trend: false } }),

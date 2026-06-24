@@ -46,6 +46,11 @@ export const WEIGHTS = {
 };
 export const NEUTRAL_EMPIRICAL_EDGE = 7.5; // midpoint of the 15 weight; ceiling 92.5 until Phase 8
 
+// Liquidity-gate defaults (tradability filter). Overridable via gp-config
+// (minPrice / minAvgDollarVolume30). Starting values agreed for first observation.
+export const DEFAULT_MIN_PRICE = 10;
+export const DEFAULT_MIN_AVG_DOLLAR_VOLUME = 50_000_000;
+
 // growthQuality bounds: clamp raw Finnhub YoY % so a garbage reading (loss-to-profit
 // ~9000%, or $0.01→$0.02 noise) can't dominate; saturate the gradient at GROWTH_SAT.
 const GROWTH_CLAMP_LO = -100;
@@ -166,6 +171,24 @@ export function score(marketData, config, marketContext = {}) {
 
   gates.news = ctx.newsLevel !== "high";
   if (!gates.news) return noSignal(marketData, null, gates, "HIGH-impact news present");
+
+  // Liquidity gate — a TRADABILITY filter, distinct from the volume SCORE (which
+  // measures today's participation vs the name's own average). DOLLAR volume, not
+  // shares: 1M shares of a $3 stock ≠ 1M shares of a $200 stock. Tunable via
+  // gp-config; code defaults are the agreed starting values (price ≥ $10, $ADV ≥ $50M).
+  const minPrice = typeof config.minPrice === "number" ? config.minPrice : DEFAULT_MIN_PRICE;
+  const minAvgDollarVolume30 =
+    typeof config.minAvgDollarVolume30 === "number" ? config.minAvgDollarVolume30 : DEFAULT_MIN_AVG_DOLLAR_VOLUME;
+  const avgDollarVolume30 = close > 0 && avgVolume30 > 0 ? close * avgVolume30 : 0;
+  gates.liquidity = close >= minPrice && avgDollarVolume30 >= minAvgDollarVolume30;
+  if (!gates.liquidity) {
+    return noSignal(
+      marketData,
+      null,
+      gates,
+      `illiquid: price ${round(close, 2)} (min ${minPrice}) / $ADV ${Math.round(avgDollarVolume30)} (min ${minAvgDollarVolume30})`
+    );
+  }
 
   gates.earnings = !(typeof daysToEarnings === "number" && daysToEarnings >= 0 && daysToEarnings <= 3);
   if (!gates.earnings) return noSignal(marketData, null, gates, `earnings within 3 days (${daysToEarnings}d)`);

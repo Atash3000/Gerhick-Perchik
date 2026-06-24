@@ -184,6 +184,7 @@ function round1(n) {
 const GATE_LABELS = {
   correlation: "Correlation",
   trend: "Trend <200MA",
+  liquidity: "Liquidity",
   earnings: "Earnings",
   marketRegime: "SPY <200MA",
   news: "High-impact news",

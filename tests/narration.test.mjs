@@ -315,6 +315,7 @@ test("composeRichMessage v2.1: header tier, Gerchik Level, 1-decimal breakdown",
   assert.match(msg, /Risk\/Reward: 2\.0 : 1/);
   assert.match(msg, /Size: 157 shares ≈ \$4220\.16/);
   assert.match(msg, /💡 Why It Scored High/);
+  assert.match(msg, /Liquidity: \$395M avg dollar volume/); // 239.63 × 1,646,763 ≈ $394.6M → $395M
   assert.doesNotMatch(msg, /\bBUY\b/);
 });
 

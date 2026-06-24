@@ -58,6 +58,10 @@ export function snapshotMetrics(md) {
     typeof m.volume === "number" && m.avgVolume30 > 0
       ? Math.round((m.volume / m.avgVolume30) * 100) / 100
       : null;
+  // Average DOLLAR volume over 30d (close × avgVolume30) — the liquidity-gate input;
+  // captured for every name so the gate's reach can be studied. null if unavailable.
+  const avgDollarVolume30 =
+    typeof m.close === "number" && m.avgVolume30 > 0 ? Math.round(m.close * m.avgVolume30) : null;
   // Derived v2 signals (captured for Phase 8 analysis; NOT yet scored). Booleans
   // are null when an input MA/level is unavailable (insufficient history).
   const minerviniAligned =
@@ -94,6 +98,7 @@ export function snapshotMetrics(md) {
     volume: m.volume ?? null,
     avgVolume30: m.avgVolume30 ?? null,
     volumeRatio,
+    avgDollarVolume30,
     high20d: m.high20d ?? null,
     high55d: m.high55d ?? null,
     // Raw relative-strength inputs (RS rank computed later, cross-sectionally):
@@ -178,6 +183,9 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
         resistanceTarget: result.resistanceTarget ?? null,
         targetAtrMultiple: result.targetAtrMultiple ?? null,
         gates: result.gates ?? null,
+        // Liquidity-gate result, surfaced as its own field for easy querying/reporting
+        // (null when the name was rejected before the liquidity gate was evaluated).
+        liquidityPass: typeof result.gates?.liquidity === "boolean" ? result.gates.liquidity : null,
         // Raw inputs for Phase 8 analysis (recorded for EVERY decision, so we can
         // study what predicts outcomes even for gate-rejected names).
         metrics: snapshotMetrics(marketData),
