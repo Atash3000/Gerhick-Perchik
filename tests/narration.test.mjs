@@ -228,6 +228,21 @@ test("composeRichMessage v2: Technicals block carries distance/ATR line", () => 
   assert.match(msg, /ATR\/Price: 4\.0%/);
 });
 
+test("composeRichMessage: Technicals target line matches targetType (issue #61)", () => {
+  const mk = (tt) => composeRichMessage({ ...FACTOR_RESULT, targetType: tt }, FACTOR_MD, RICH_CFG, "observe", "x", FACTOR_EXTRAS);
+  // target is 198.00 in RICH_RESULT (carried via FACTOR_RESULT spread)
+  assert.match(mk("RESISTANCE"), /^Resistance: \$198\.00 \(target\)$/m);
+  assert.match(mk("PROJECTED_ATR"), /^Target: \$198\.00 \(Projected ATR\)$/m);
+  assert.match(mk("RESISTANCE_FLOORED_BY_PROJECTED_ATR"), /^Target: \$198\.00 \(ATR floor; resistance was too close\)$/m);
+  // unknown/missing → generic, never a bare "Resistance"
+  assert.match(mk(null), /^Target: \$198\.00 \(target\)$/m);
+});
+
+test("composeRichMessage: PROJECTED_ATR no longer mislabels target as Resistance", () => {
+  const msg = composeRichMessage({ ...FACTOR_RESULT, targetType: "PROJECTED_ATR" }, FACTOR_MD, RICH_CFG, "observe", "x", FACTOR_EXTRAS);
+  assert.doesNotMatch(msg, /Resistance: \$198\.00 \(target\)/);
+});
+
 test("composeRichMessage v2: negative growth renders signed", () => {
   const extras = { fundamentals: { epsGrowthQtr: -5, salesGrowthQtr: 0 }, sectorStrengthPct: null };
   const msg = composeRichMessage(FACTOR_RESULT, FACTOR_MD, RICH_CFG, "observe", "x", extras);

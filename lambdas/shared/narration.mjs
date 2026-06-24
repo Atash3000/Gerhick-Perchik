@@ -196,6 +196,23 @@ const TARGET_TYPE_LABELS = {
   RESISTANCE_FLOORED_BY_PROJECTED_ATR: "Resistance too close → ATR floor",
 };
 
+// Technicals target line worded to match how the target was derived (issue #61).
+// Only RESISTANCE is an actual resistance level; the ATR-projected variants must
+// not be labeled "Resistance" or the line contradicts the Target Type field.
+function targetLine(result) {
+  const price = `$${money(result.target)}`;
+  switch (result?.targetType) {
+    case "RESISTANCE":
+      return `Resistance: ${price} (target)`;
+    case "PROJECTED_ATR":
+      return `Target: ${price} (Projected ATR)`;
+    case "RESISTANCE_FLOORED_BY_PROJECTED_ATR":
+      return `Target: ${price} (ATR floor; resistance was too close)`;
+    default:
+      return `Target: ${price} (target)`;
+  }
+}
+
 // Signed YoY growth %, one decimal. Non-number → "N/A".
 function growthPct(n) {
   if (typeof n !== "number" || !Number.isFinite(n)) return "N/A";
@@ -268,7 +285,7 @@ export function composeRichMessage(result, md, config, mode, narration, extras =
   lines.push("Trend: above 50MA & 200MA ✓");
   lines.push(`RSI(14): ${num2(m.rsi)}`);
   if (m.nearestSupport) lines.push(`Support: $${money(m.nearestSupport.price)} (${m.nearestSupport.touches} touches)`);
-  lines.push(`Resistance: $${money(result.target)} (target)`);
+  lines.push(targetLine(result));
   lines.push(`ATR(14): $${money(m.atr)} • Vol: ${volR}× avg`);
   // Compact trend-extension / volatility context (computed from existing fields).
   if (m.ma200 > 0 && m.ma50 > 0) {
