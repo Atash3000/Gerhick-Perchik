@@ -7,6 +7,11 @@ import {
   composeMessage,
   composeRichMessage,
   buildBullets,
+  qualityTier,
+  trendText,
+  targetTypeBadge,
+  buildWhyScoredHigh,
+  buildRiskBullets,
   LOCKED_SYSTEM_PROMPT,
   NARRATION_MODEL,
   OBSERVE_PREFIX,
@@ -124,13 +129,14 @@ test("composeRichMessage renders the full styled alert, numbers deterministic, n
   assert.ok(msg.startsWith("🟢"));
   assert.match(msg, new RegExp(OBSERVE_PREFIX));
   assert.match(msg, /NVDA — NVIDIA CORP/);
-  assert.match(msg, /Score: 81\/100/);
-  assert.match(msg, /Market cap: \$4\.36T/);
-  assert.match(msg, /52w: \$86\.62 – \$195\.95 \(84% of range\)/);
+  assert.match(msg, /Score: 81\.0\/100 • 🅰️ Tier A\+/); // score 81 → A+
+  assert.match(msg, /Market Cap: \$4\.36T/);
+  assert.match(msg, /52W Range: \$86\.62 – \$195\.95/);
   assert.match(msg, /Entry: \$178\.40/);
-  assert.match(msg, /Target: \$198\.00 \(\+11\.0%, 2\.72:1 R:R\)/);
+  assert.match(msg, /Target: \$198\.00 \(\+11\.0%\)/);     // Trade Plan, no inline R:R
+  assert.match(msg, /Risk\/Reward: 2\.7 : 1/);             // R:R own line, 1-decimal
   assert.match(msg, /Size: 13 shares ≈ \$2319\.20 • Risk: \$93\.60 \(1%\)/);
-  assert.match(msg, /💡 Thesis:\nConstructive setup\./);
+  assert.match(msg, /💡 Thesis\nConstructive setup\./);
   assert.doesNotMatch(msg, /\bBUY\b/);
 });
 
@@ -164,29 +170,29 @@ const FACTOR_EXTRAS = {
 function parseBreakdownRows(msg) {
   const labels = ["Trend", "Setup", "RS", "Growth", "Sector", "Momentum", "Volume", "News", "Empirical Edge"];
   return labels.map((l) => {
-    const m = msg.match(new RegExp(`^${l}: ([\\d.]+)/`, "m"));
+    const m = msg.match(new RegExp(`^${l}: ([\\d.]+) /`, "m"));
     return m ? Number(m[1]) : null;
   });
 }
 
 test("composeRichMessage v2: all factors present render with correct formatting", () => {
   const msg = composeRichMessage(FACTOR_RESULT, FACTOR_MD, RICH_CFG, "observe", "x", FACTOR_EXTRAS);
-  assert.match(msg, /📊 Score Factors:/);
+  assert.match(msg, /📊 Score Factors/);
   assert.match(msg, /RS Rank: 87\/99/);
   assert.match(msg, /EPS Growth YoY: \+42\.0%/);
   assert.match(msg, /Revenue Growth YoY: \+18\.0%/);
   assert.match(msg, /Sector Strength: 78\/99/);
-  assert.match(msg, /Target Type: Projected ATR target/);
-  assert.match(msg, /Factor Breakdown:/);
+  assert.match(msg, /📋 Factor Breakdown/);
+  assert.doesNotMatch(msg, /Target Type:/); // moved to the Gerchik Level badge
 });
 
 test("composeRichMessage v2: factor section sits between Technicals and Thesis", () => {
   const msg = composeRichMessage(FACTOR_RESULT, FACTOR_MD, RICH_CFG, "observe", "x", FACTOR_EXTRAS);
-  assert.ok(msg.indexOf("📈 Technicals:") < msg.indexOf("📊 Score Factors:"));
-  assert.ok(msg.indexOf("📊 Score Factors:") < msg.indexOf("💡 Thesis:"));
+  assert.ok(msg.indexOf("📈 Technicals") < msg.indexOf("📊 Score Factors"));
+  assert.ok(msg.indexOf("📊 Score Factors") < msg.indexOf("💡 Thesis"));
 });
 
-test("composeRichMessage v2: missing factors all render N/A and components show 0", () => {
+test("composeRichMessage v2: missing factors all render N/A and components show 0.0", () => {
   const noBreakdown = { ...FACTOR_RESULT, targetType: null, breakdown: null };
   const noRsMd = { ...RICH_MD }; // no rsRank
   const msg = composeRichMessage(noBreakdown, noRsMd, RICH_CFG, "observe", "x"); // no extras
@@ -194,30 +200,23 @@ test("composeRichMessage v2: missing factors all render N/A and components show 
   assert.match(msg, /EPS Growth YoY: N\/A/);
   assert.match(msg, /Revenue Growth YoY: N\/A/);
   assert.match(msg, /Sector Strength: N\/A/);
-  assert.match(msg, /Target Type: N\/A/);
-  assert.match(msg, /^Trend: 0\/15/m);
-  assert.match(msg, /^Empirical Edge: 0\/15/m);
+  assert.match(msg, /^Trend: 0\.0 \/ 15/m);
+  assert.match(msg, /^Empirical Edge: 0\.0 \/ 15/m);
 });
 
-test("composeRichMessage v2: all three target types map to human labels", () => {
-  const mk = (tt) => composeRichMessage({ ...FACTOR_RESULT, targetType: tt }, FACTOR_MD, RICH_CFG, "observe", "x", FACTOR_EXTRAS);
-  assert.match(mk("RESISTANCE"), /Target Type: Resistance target/);
-  assert.match(mk("PROJECTED_ATR"), /Target Type: Projected ATR target/);
-  assert.match(mk("RESISTANCE_FLOORED_BY_PROJECTED_ATR"), /Target Type: Resistance too close → ATR floor/);
-});
-
-test("composeRichMessage v2: displayed breakdown rows sum to result.score", () => {
+test("composeRichMessage v2: 1-decimal breakdown rows still sum to result.score", () => {
   const msg = composeRichMessage(FACTOR_RESULT, FACTOR_MD, RICH_CFG, "observe", "x", FACTOR_EXTRAS);
   const rows = parseBreakdownRows(msg);
   assert.ok(rows.every((v) => v !== null), "all 9 rows present");
   const sum = rows.reduce((a, b) => a + b, 0);
-  assert.equal(Math.round(sum * 100) / 100, FACTOR_RESULT.score);
+  // displayed values are 1-decimal, so they sum to the score within rounding
+  assert.ok(Math.abs(sum - FACTOR_RESULT.score) <= 0.5, `displayed sum ${sum} ≈ ${FACTOR_RESULT.score}`);
 });
 
-test("composeRichMessage v2: Empirical Edge row labeled neutral, with note", () => {
+test("composeRichMessage v2: Empirical Edge row + neutral note", () => {
   const msg = composeRichMessage(FACTOR_RESULT, FACTOR_MD, RICH_CFG, "observe", "x", FACTOR_EXTRAS);
-  assert.match(msg, /Empirical Edge: 7\.5\/15 \(neutral\)/);
-  assert.match(msg, /Empirical Edge is neutral until enough outcomes exist\./);
+  assert.match(msg, /Empirical Edge: 7\.5 \/ 15/);
+  assert.match(msg, /Empirical Edge remains neutral until enough real outcomes accumulate\./);
 });
 
 test("composeRichMessage v2: Technicals block carries distance/ATR line", () => {
@@ -234,4 +233,95 @@ test("composeRichMessage v2: negative growth renders signed", () => {
   assert.match(msg, /EPS Growth YoY: -5\.0%/);
   assert.match(msg, /Revenue Growth YoY: \+0\.0%/);
   assert.match(msg, /Sector Strength: N\/A/);
+});
+
+// === Alert v2.1: trader's-briefing redesign + dynamic trend-line bug fix ===
+
+test("qualityTier: score → letter+emoji bands", () => {
+  assert.deepEqual(qualityTier(81), { letter: "A+", emoji: "🅰️" });
+  assert.deepEqual(qualityTier(77.3), { letter: "A", emoji: "🅰️" });
+  assert.deepEqual(qualityTier(65), { letter: "B", emoji: "🅱️" });
+  assert.deepEqual(qualityTier(55), { letter: "C", emoji: "🅲" });
+});
+
+test("trendText is DERIVED, not hardcoded (the bug fix)", () => {
+  // above both
+  assert.equal(trendText({ close: 239.63, ma50: 232.21, ma200: 177.41 }), "Above 50MA & 200MA ✓");
+  // WBD real case: above 200MA, BELOW 50MA — must NOT claim above 50MA
+  assert.equal(trendText({ close: 26.88, ma50: 27.01, ma200: 25.30 }), "Above 200MA ✓ · below 50MA ⚠️");
+  assert.match(trendText({ close: 1, ma50: null, ma200: 2 }), /unavailable/);
+});
+
+test("targetTypeBadge maps each type to an emoji label", () => {
+  assert.equal(targetTypeBadge("RESISTANCE"), "🟢 Resistance");
+  assert.equal(targetTypeBadge("PROJECTED_ATR"), "🟡 Projected ATR");
+  assert.equal(targetTypeBadge("RESISTANCE_FLOORED_BY_PROJECTED_ATR"), "🟠 ATR Floor");
+});
+
+test("buildWhyScoredHigh fires bullets only for strong factors", () => {
+  const md = { close: 178, ma50: 160, ma200: 140, volume: 1_500_000, avgVolume30: 1_000_000 };
+  const why = buildWhyScoredHigh({}, { ...md, rsRank: 91 }, { fundamentals: { epsGrowthQtr: 383.8, salesGrowthQtr: 21.3 }, sectorStrengthPct: 75 });
+  assert.ok(why.some((b) => /Top-decile RS Rank \(91\)/.test(b)));
+  assert.ok(why.some((b) => /Exceptional EPS growth \(\+383\.8%\)/.test(b)));
+  assert.ok(why.some((b) => /Strong revenue growth \(\+21\.3%\)/.test(b)));
+  assert.ok(why.some((b) => /Strong sector participation/.test(b)));
+  assert.ok(why.some((b) => /Price above 50MA & 200MA/.test(b)));
+  assert.ok(why.some((b) => /Elevated volume/.test(b)));
+});
+
+test("buildWhyScoredHigh falls back when nothing is strong", () => {
+  const why = buildWhyScoredHigh({}, { close: 10, ma50: 9, ma200: 8, volume: 1, avgVolume30: 10, rsRank: 20 }, {});
+  // trend still fires (above both); but with weak everything else, ensure non-empty
+  assert.ok(why.length >= 1);
+  const why2 = buildWhyScoredHigh({}, { close: 8, ma50: 9, ma200: 10, rsRank: 20 }, {});
+  assert.deepEqual(why2, ["Passed all entry gates"]);
+});
+
+test("buildRiskBullets: moderate RSI, projected-ATR no-resistance, always stop-gap", () => {
+  const risks = buildRiskBullets(
+    { targetType: "PROJECTED_ATR" },
+    { rsi: 45.4, daysToEarnings: 39, nearestSupport: { price: 1, touches: 2 } },
+    { minRiskReward: 2 }
+  );
+  assert.ok(risks.some((r) => /RSI momentum is only moderate/.test(r)));
+  assert.ok(risks.some((r) => /No nearby chart resistance available/.test(r)));
+  assert.ok(risks.some((r) => /ATR-based stop may gap through overnight/.test(r)));
+  assert.ok(!risks.some((r) => /Earnings/.test(r))); // 39d
+});
+
+test("composeRichMessage v2.1: header tier, Gerchik Level, 1-decimal breakdown", () => {
+  const result = {
+    ticker: "NUE", score: 77.32, entry: 239.63, stop: 227.90, target: 263.10, riskReward: 2,
+    dataAsOf: "2026-06-23", strategyVersion: "gp-2.0.0", targetType: "PROJECTED_ATR",
+    breakdown: { trend: 15, setup: 11, rsRank: 11.03, growthQuality: 13, sectorStrength: 3.79, momentum: 6, volume: 8, news: 2, empiricalEdge: 7.5 },
+    sizing: { shares: 157, notional: 4220.16, riskAmount: 99.65, riskPct: 1 },
+  };
+  const md = {
+    name: "Nucor Corp", marketCapMillions: 55_800, close: 239.63, low52: 120.99, high52: 270.90,
+    ma50: 232.21, ma200: 177.41, atr: 7.82, rsi: 45.41, volume: 2_283_791, avgVolume30: 1_646_763,
+    nearestSupport: { price: 235.44, touches: 2, brokenSupport: false }, sector: "Materials", rsRank: 91,
+  };
+  const extras = { fundamentals: { epsGrowthQtr: 383.77, salesGrowthQtr: 21.28 }, sectorStrengthPct: 75 };
+  const msg = composeRichMessage(result, md, { minRiskReward: 2 }, "observe", "NUE strong uptrend.", extras);
+
+  assert.match(msg, /Score: 77\.3\/100 • 🅰️ Tier A/);
+  assert.match(msg, /🎯 Gerchik Level/);
+  assert.match(msg, /Support: \$235\.44 \(2 touches\)/);
+  assert.match(msg, /Target: \$263\.10 \(🟡 Projected ATR\)/);
+  assert.match(msg, /📈 Technicals\nTrend: Above 50MA & 200MA ✓/);
+  assert.match(msg, /📋 Factor Breakdown/);
+  assert.match(msg, /Trend: 15\.0 \/ 15/);
+  assert.match(msg, /Sector: 3\.8 \/ 5/);
+  assert.match(msg, /Risk\/Reward: 2\.0 : 1/);
+  assert.match(msg, /Size: 157 shares ≈ \$4220\.16/);
+  assert.match(msg, /💡 Why It Scored High/);
+  assert.doesNotMatch(msg, /\bBUY\b/);
+});
+
+test("composeRichMessage v2.1: support with no touch count never prints 'undefined'", () => {
+  const result = { ticker: "X", score: 60, entry: 10, stop: 9, target: 12, riskReward: 2, dataAsOf: "2026-06-23", strategyVersion: "gp-2.0.0", targetType: "PROJECTED_ATR", breakdown: null, sizing: null };
+  const md = { close: 10, ma50: 9, ma200: 8, atr: 0.5, rsi: 60, nearestSupport: { price: 9.5 } }; // touches missing
+  const msg = composeRichMessage(result, md, { minRiskReward: 2 }, "observe", "x", {});
+  assert.match(msg, /Support: \$9\.50/);
+  assert.doesNotMatch(msg, /undefined/);
 });
