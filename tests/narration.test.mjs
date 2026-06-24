@@ -140,3 +140,98 @@ test("composeRichMessage in live mode omits the OBSERVE prefix; null sizing show
   assert.ok(!msg.includes(OBSERVE_PREFIX));
   assert.match(msg, /Size: — \(position sizing not configured\)/);
 });
+
+// --- Alert v2: visibility-only Score Factors section ---
+// A full 9-key breakdown (gp-2.0.0). Values are the engine's round(,2) outputs and
+// sum exactly to `score` (the scoring invariant), so the displayed rows must too.
+const FACTOR_BREAKDOWN = {
+  empiricalEdge: 7.5, setup: 17.3, trend: 15, momentum: 7,
+  volume: 5, news: 2, rsRank: 10, growthQuality: 9, sectorStrength: 4,
+};
+const FACTOR_SCORE = Object.values(FACTOR_BREAKDOWN).reduce((a, b) => a + b, 0); // 76.8
+const FACTOR_RESULT = {
+  ...RICH_RESULT, score: FACTOR_SCORE,
+  targetType: "PROJECTED_ATR", breakdown: FACTOR_BREAKDOWN,
+};
+// RICH_MD + cross-sectional rsRank that the scanner attaches.
+const FACTOR_MD = { ...RICH_MD, rsRank: 87 };
+const FACTOR_EXTRAS = {
+  fundamentals: { epsGrowthQtr: 42, salesGrowthQtr: 18 },
+  sectorStrengthPct: 78,
+};
+
+// Parse the numerators from the displayed "Label: value/max" breakdown rows.
+function parseBreakdownRows(msg) {
+  const labels = ["Trend", "Setup", "RS", "Growth", "Sector", "Momentum", "Volume", "News", "Empirical Edge"];
+  return labels.map((l) => {
+    const m = msg.match(new RegExp(`^${l}: ([\\d.]+)/`, "m"));
+    return m ? Number(m[1]) : null;
+  });
+}
+
+test("composeRichMessage v2: all factors present render with correct formatting", () => {
+  const msg = composeRichMessage(FACTOR_RESULT, FACTOR_MD, RICH_CFG, "observe", "x", FACTOR_EXTRAS);
+  assert.match(msg, /📊 Score Factors:/);
+  assert.match(msg, /RS Rank: 87\/99/);
+  assert.match(msg, /EPS Growth YoY: \+42\.0%/);
+  assert.match(msg, /Revenue Growth YoY: \+18\.0%/);
+  assert.match(msg, /Sector Strength: 78\/99/);
+  assert.match(msg, /Target Type: Projected ATR target/);
+  assert.match(msg, /Factor Breakdown:/);
+});
+
+test("composeRichMessage v2: factor section sits between Technicals and Thesis", () => {
+  const msg = composeRichMessage(FACTOR_RESULT, FACTOR_MD, RICH_CFG, "observe", "x", FACTOR_EXTRAS);
+  assert.ok(msg.indexOf("📈 Technicals:") < msg.indexOf("📊 Score Factors:"));
+  assert.ok(msg.indexOf("📊 Score Factors:") < msg.indexOf("💡 Thesis:"));
+});
+
+test("composeRichMessage v2: missing factors all render N/A and components show 0", () => {
+  const noBreakdown = { ...FACTOR_RESULT, targetType: null, breakdown: null };
+  const noRsMd = { ...RICH_MD }; // no rsRank
+  const msg = composeRichMessage(noBreakdown, noRsMd, RICH_CFG, "observe", "x"); // no extras
+  assert.match(msg, /RS Rank: N\/A/);
+  assert.match(msg, /EPS Growth YoY: N\/A/);
+  assert.match(msg, /Revenue Growth YoY: N\/A/);
+  assert.match(msg, /Sector Strength: N\/A/);
+  assert.match(msg, /Target Type: N\/A/);
+  assert.match(msg, /^Trend: 0\/15/m);
+  assert.match(msg, /^Empirical Edge: 0\/15/m);
+});
+
+test("composeRichMessage v2: all three target types map to human labels", () => {
+  const mk = (tt) => composeRichMessage({ ...FACTOR_RESULT, targetType: tt }, FACTOR_MD, RICH_CFG, "observe", "x", FACTOR_EXTRAS);
+  assert.match(mk("RESISTANCE"), /Target Type: Resistance target/);
+  assert.match(mk("PROJECTED_ATR"), /Target Type: Projected ATR target/);
+  assert.match(mk("RESISTANCE_FLOORED_BY_PROJECTED_ATR"), /Target Type: Resistance too close → ATR floor/);
+});
+
+test("composeRichMessage v2: displayed breakdown rows sum to result.score", () => {
+  const msg = composeRichMessage(FACTOR_RESULT, FACTOR_MD, RICH_CFG, "observe", "x", FACTOR_EXTRAS);
+  const rows = parseBreakdownRows(msg);
+  assert.ok(rows.every((v) => v !== null), "all 9 rows present");
+  const sum = rows.reduce((a, b) => a + b, 0);
+  assert.equal(Math.round(sum * 100) / 100, FACTOR_RESULT.score);
+});
+
+test("composeRichMessage v2: Empirical Edge row labeled neutral, with note", () => {
+  const msg = composeRichMessage(FACTOR_RESULT, FACTOR_MD, RICH_CFG, "observe", "x", FACTOR_EXTRAS);
+  assert.match(msg, /Empirical Edge: 7\.5\/15 \(neutral\)/);
+  assert.match(msg, /Empirical Edge is neutral until enough outcomes exist\./);
+});
+
+test("composeRichMessage v2: Technicals block carries distance/ATR line", () => {
+  const msg = composeRichMessage(FACTOR_RESULT, FACTOR_MD, RICH_CFG, "observe", "x", FACTOR_EXTRAS);
+  // close 178.40, ma200 140 → +27.4%; ma50 160 → +11.5%; atr 7.20/178.40 → 4.0%
+  assert.match(msg, /Distance >200MA: \+27\.4%/);
+  assert.match(msg, />50MA: \+11\.5%/);
+  assert.match(msg, /ATR\/Price: 4\.0%/);
+});
+
+test("composeRichMessage v2: negative growth renders signed", () => {
+  const extras = { fundamentals: { epsGrowthQtr: -5, salesGrowthQtr: 0 }, sectorStrengthPct: null };
+  const msg = composeRichMessage(FACTOR_RESULT, FACTOR_MD, RICH_CFG, "observe", "x", extras);
+  assert.match(msg, /EPS Growth YoY: -5\.0%/);
+  assert.match(msg, /Revenue Growth YoY: \+0\.0%/);
+  assert.match(msg, /Sector Strength: N\/A/);
+});

@@ -10,6 +10,7 @@
 // via the Anthropic Messages API over fetch. Key read by path from SSM.
 
 import { getParameter } from "./ssm.mjs";
+import { WEIGHTS } from "./scoring.mjs";
 
 export const ANTHROPIC_KEY_PATH = "/edge-hunter/anthropic/api_key";
 export const NARRATION_MODEL = "claude-haiku-4-5";
@@ -169,9 +170,74 @@ export function buildBullets(result, md, config) {
   return { bullish, risks };
 }
 
+// --- Alert v2: Score Factors (visibility-only). Surfaces the gp-2.0.0 inputs that
+// already drove the score — RS rank, fundamentals growth, sector strength, the
+// target derivation type, and the full per-component breakdown. Adds NOTHING to the
+// math: every value is read from data the scan already produced. Pure.
+
+// breakdown key → display label, in the fixed presentation order. The `/max`
+// denominators come from the imported WEIGHTS so the alert can never drift out of
+// sync with the scoring engine.
+const BREAKDOWN_ROWS = [
+  ["Trend", "trend"],
+  ["Setup", "setup"],
+  ["RS", "rsRank"],
+  ["Growth", "growthQuality"],
+  ["Sector", "sectorStrength"],
+  ["Momentum", "momentum"],
+  ["Volume", "volume"],
+  ["News", "news"],
+  ["Empirical Edge", "empiricalEdge"],
+];
+
+const TARGET_TYPE_LABELS = {
+  RESISTANCE: "Resistance target",
+  PROJECTED_ATR: "Projected ATR target",
+  RESISTANCE_FLOORED_BY_PROJECTED_ATR: "Resistance too close → ATR floor",
+};
+
+// Signed YoY growth %, one decimal. Non-number → "N/A".
+function growthPct(n) {
+  if (typeof n !== "number" || !Number.isFinite(n)) return "N/A";
+  return `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
+}
+
+// Show a breakdown value without forcing integer rounding (so the visible rows
+// still sum to the displayed score). Trims trailing zeros: 15.0→"15", 7.50→"7.5".
+function trimNum(n) {
+  return String(Number(n.toFixed(2)));
+}
+
+export function buildScoreFactors(result, md, extras = {}) {
+  const m = md ?? {};
+  const f = extras.fundamentals ?? null;
+  const breakdown = result?.breakdown ?? null;
+
+  const lines = ["📊 Score Factors:"];
+  lines.push(`RS Rank: ${typeof m.rsRank === "number" ? `${m.rsRank}/99` : "N/A"}`);
+  lines.push(`EPS Growth YoY: ${growthPct(f?.epsGrowthQtr)}`);
+  lines.push(`Revenue Growth YoY: ${growthPct(f?.salesGrowthQtr)}`);
+  lines.push(
+    `Sector Strength: ${typeof extras.sectorStrengthPct === "number" ? `${extras.sectorStrengthPct}/99` : "N/A"}`
+  );
+  lines.push(`Target Type: ${TARGET_TYPE_LABELS[result?.targetType] ?? "N/A"}`);
+
+  lines.push("", "Factor Breakdown:");
+  for (const [label, key] of BREAKDOWN_ROWS) {
+    const v = typeof breakdown?.[key] === "number" ? breakdown[key] : 0;
+    const max = WEIGHTS[key];
+    const suffix = key === "empiricalEdge" ? " (neutral)" : "";
+    lines.push(`${label}: ${trimNum(v)}/${max}${suffix}`);
+  }
+  lines.push("ℹ️ Empirical Edge is neutral until enough outcomes exist.");
+  return lines;
+}
+
 // Build the full richly-styled Telegram message DETERMINISTICALLY. Only `narration`
-// (the thesis) is AI-written; every number and bullet is derived here. Pure.
-export function composeRichMessage(result, md, config, mode, narration) {
+// (the thesis) is AI-written; every number and bullet is derived here. `extras`
+// carries context the scanner already computed but `md` doesn't hold:
+// { fundamentals, sectorStrengthPct }. Pure.
+export function composeRichMessage(result, md, config, mode, narration, extras = {}) {
   const m = md ?? {};
   const rangePct =
     typeof m.low52 === "number" && typeof m.high52 === "number" && m.high52 > m.low52
@@ -204,6 +270,16 @@ export function composeRichMessage(result, md, config, mode, narration) {
   if (m.nearestSupport) lines.push(`Support: $${money(m.nearestSupport.price)} (${m.nearestSupport.touches} touches)`);
   lines.push(`Resistance: $${money(result.target)} (target)`);
   lines.push(`ATR(14): $${money(m.atr)} • Vol: ${volR}× avg`);
+  // Compact trend-extension / volatility context (computed from existing fields).
+  if (m.ma200 > 0 && m.ma50 > 0) {
+    lines.push(`Distance >200MA: ${signedPct(m.close, m.ma200)}  ·  >50MA: ${signedPct(m.close, m.ma50)}`);
+  }
+  if (m.close > 0 && typeof m.atr === "number") {
+    lines.push(`ATR/Price: ${((m.atr / m.close) * 100).toFixed(1)}%`);
+  }
+
+  // Score Factors — why the score is what it is (visibility-only; no new math).
+  lines.push("", ...buildScoreFactors(result, m, extras));
 
   lines.push("", "💡 Thesis:", (narration ?? "").trim() || "Technical setup flagged by the scoring model.");
 
