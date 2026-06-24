@@ -169,3 +169,81 @@ test("stale scan produces a short skip message, not a full report", () => {
   assert.equal(r.isFreshScan, false);
   assert.match(r.text, /no new scan/i);
 });
+
+// --- Redesign: Score Distribution + Top Sectors + dashboard text ---
+// Candidates spread across score bands and sectors (all gates pass).
+function cand(ticker, score, sector) {
+  return snap({
+    ticker, decision: "BUY_CANDIDATE", score, sector, targetType: "PROJECTED_ATR",
+    gates: { marketRegime: true, news: true, earnings: true, trend: true, validRisk: true, targetAbovePrice: true, riskReward: true, correlation: true },
+  });
+}
+function distroSnapshots() {
+  return [
+    cand("H1", 75, "Financials"),   // high
+    cand("H2", 72, "Financials"),   // high
+    cand("M1", 65, "Financials"),   // mid
+    cand("M2", 62, "Industrials"),  // mid
+    cand("L1", 55, "Industrials"),  // low
+    cand("L2", 54, "RealEstate"),   // low
+    // below-threshold scored name — must NOT count in candidate distribution
+    snap({ ticker: "BT", decision: "NO_SIGNAL", score: 50,
+      gates: { marketRegime: true, news: true, earnings: true, trend: true, validRisk: true, targetAbovePrice: true, riskReward: true, correlation: true } }),
+  ];
+}
+
+test("scoreDistribution: candidates bucketed into high/mid/low, sums to buyCandidates", () => {
+  const c = build({ snapshots: distroSnapshots() }).counts;
+  assert.deepEqual(
+    { high: c.scoreDistribution.high, mid: c.scoreDistribution.mid, low: c.scoreDistribution.low },
+    { high: 2, mid: 2, low: 2 }
+  );
+  assert.equal(c.scoreDistribution.lowFloor, 53); // tracks threshold
+  assert.equal(c.scoreDistribution.high + c.scoreDistribution.mid + c.scoreDistribution.low, c.buyCandidates);
+});
+
+test("scoreDistribution excludes below-threshold scored names", () => {
+  const c = build({ snapshots: distroSnapshots() }).counts;
+  assert.equal(c.buyCandidates, 6); // BT (score 50) is NOT a candidate
+});
+
+test("sectorBreakdown: candidates counted by sector, desc, null→Unknown", () => {
+  const snaps = distroSnapshots();
+  snaps.push(cand("U1", 80, null)); // unknown sector
+  const c = build({ snapshots: snaps }).counts;
+  assert.deepEqual(c.sectorBreakdown, [
+    { sector: "Financials", count: 3 },
+    { sector: "Industrials", count: 2 },
+    { sector: "RealEstate", count: 1 },
+    { sector: "Unknown", count: 1 },
+  ]);
+});
+
+test("redesigned text contains the new dashboard sections", () => {
+  const t = build({ snapshots: distroSnapshots() }).text;
+  assert.match(t, /Daily Funnel/);
+  assert.match(t, /📊 Score Distribution/);
+  assert.match(t, /70\+:\s*2/);
+  assert.match(t, /60–69:\s*2/);
+  assert.match(t, /53–59:\s*2/);
+  assert.match(t, /🏭 Top Sectors/);
+  assert.match(t, /Financials:\s*3/);
+  assert.match(t, /Real Estate/); // camel-case prettified
+  assert.match(t, /🎯 Target Types/);
+});
+
+test("gate rejections render with friendly labels", () => {
+  const t = build().text; // shared fixture: trend, riskReward, marketRegime false
+  assert.match(t, /Trend <200MA:/);
+  assert.match(t, /R:R too low:/);
+  assert.match(t, /SPY <200MA:/);
+  assert.match(t, /Below score:/);
+});
+
+test("Top Sectors section omitted when there are 0 candidates", () => {
+  const noCands = [
+    snap({ ticker: "C", decision: "NO_SIGNAL", reason: "trend", gates: { marketRegime: true, news: true, earnings: true, trend: false } }),
+  ];
+  const t = build({ snapshots: noCands }).text;
+  assert.doesNotMatch(t, /🏭 Top Sectors/);
+});

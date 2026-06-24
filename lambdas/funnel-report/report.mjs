@@ -61,6 +61,8 @@ function emptyCounts(outcomes) {
     reachingScoring: 0,
     buyCandidates: 0,
     gateBreakdown: { totalNoSignal: 0, byGate: {}, belowThreshold: 0, unrecognized: 0 },
+    scoreDistribution: { high: 0, mid: 0, low: 0, lowFloor: null },
+    sectorBreakdown: [],
     targetTypes: { RESISTANCE: 0, PROJECTED_ATR: 0, RESISTANCE_FLOORED_BY_PROJECTED_ATR: 0 },
     topScored: [],
     outcomes: outcomeCounts(outcomes, null),
@@ -82,10 +84,41 @@ function computeCounts(latest, outcomes, dataAsOf, threshold) {
     reachingScoring,
     buyCandidates,
     gateBreakdown: gateBreakdown(latest),
+    scoreDistribution: scoreDistribution(latest, threshold),
+    sectorBreakdown: sectorBreakdown(latest),
     targetTypes: targetTypeDistribution(latest),
     topScored: topScored(latest, 10),
     outcomes: outcomeCounts(outcomes, dataAsOf),
   };
+}
+
+// Distribution of the BUY_CANDIDATES by score band (sums to buyCandidates). Bands
+// are fixed at 70+ / 60–69, with the bottom band floored at the live threshold so
+// its label tracks config (e.g. 53–59) instead of drifting. Candidates are already
+// >= threshold by definition, so anything below 60 falls in the bottom band.
+function scoreDistribution(latest, threshold) {
+  const cands = latest.filter((s) => s.decision === "BUY_CANDIDATE" && typeof s.score === "number");
+  let high = 0, mid = 0, low = 0;
+  for (const s of cands) {
+    if (s.score >= 70) high += 1;
+    else if (s.score >= 60) mid += 1;
+    else low += 1;
+  }
+  return { high, mid, low, lowFloor: typeof threshold === "number" ? threshold : null };
+}
+
+// Candidate count by sector (desc by count, then sector name for stable order).
+// null/missing sector → "Unknown". Returns ALL sectors; the renderer shows top 5.
+function sectorBreakdown(latest) {
+  const counts = {};
+  for (const s of latest) {
+    if (s.decision !== "BUY_CANDIDATE") continue;
+    const sec = s.sector ?? "Unknown";
+    counts[sec] = (counts[sec] ?? 0) + 1;
+  }
+  return Object.entries(counts)
+    .map(([sector, count]) => ({ sector, count }))
+    .sort((a, b) => b.count - a.count || a.sector.localeCompare(b.sector));
 }
 
 // Partition every NO_SIGNAL row into exactly one of: a single failed gate, the
@@ -146,39 +179,96 @@ function round1(n) {
 }
 
 // --- Telegram text (plain text; deterministic) -----------------------------
+
+// Friendly names for the raw gate keys (unknown keys fall through verbatim).
+const GATE_LABELS = {
+  correlation: "Correlation",
+  trend: "Trend <200MA",
+  earnings: "Earnings",
+  marketRegime: "SPY <200MA",
+  news: "High-impact news",
+  validRisk: "Bad ATR/stop",
+  targetAbovePrice: "Target ≤ price",
+  riskReward: "R:R too low",
+};
+
+const DIVIDER = "━━━━━━━━━━━━━━━━━━━━";
+
+// "RealEstate" → "Real Estate", "HealthCare" → "Health Care" (camel-case boundary).
+function prettySector(s) {
+  return String(s).replace(/([a-z])([A-Z])/g, "$1 $2");
+}
+
 function renderText({ dataAsOf, counts, strategyVersion, threshold }) {
   const c = counts;
-  const gateLines = Object.entries(c.gateBreakdown.byGate)
+  const L = [];
+
+  // Header
+  L.push("🟢 GERCHIK-PERCHIK — Daily Funnel");
+  L.push(`📅 ${dataAsOf} · ${strategyVersion ?? "?"} · 📋 OBSERVE`);
+  L.push(DIVIDER, "");
+
+  // Funnel
+  L.push("🔎 Funnel");
+  L.push(`• Scanned:     ${c.watchlist}`);
+  L.push(`• Fresh:       ${c.freshCoverage.fresh}/${c.freshCoverage.total} (${c.freshCoverage.pct}%)`);
+  if (c.freshCoverage.noData) L.push(`• NO_DATA:     ${c.freshCoverage.noData}`);
+  L.push(`• Scored:      ${c.reachingScoring}`);
+  L.push(`• Candidates:  ${c.buyCandidates} (≥${threshold ?? "?"})`);
+  L.push("");
+
+  // Dropped (gate rejections)
+  L.push(`🚧 Dropped (${c.gateBreakdown.totalNoSignal})`);
+  const gateRows = Object.entries(c.gateBreakdown.byGate)
     .sort((a, b) => b[1] - a[1])
-    .map(([g, n]) => `    ${g}: ${n}`);
-  if (c.gateBreakdown.belowThreshold) gateLines.push(`    (reached scoring, below threshold: ${c.gateBreakdown.belowThreshold})`);
-  if (c.gateBreakdown.unrecognized) gateLines.push(`    unrecognized: ${c.gateBreakdown.unrecognized}`);
+    .map(([g, n]) => `• ${GATE_LABELS[g] ?? g}: ${n}`);
+  if (c.gateBreakdown.belowThreshold) gateRows.push(`• Below score: ${c.gateBreakdown.belowThreshold}`);
+  if (c.gateBreakdown.unrecognized) gateRows.push(`• Unrecognized: ${c.gateBreakdown.unrecognized}`);
+  L.push(...(gateRows.length ? gateRows : ["• (none)"]));
+  L.push("");
 
-  const top = c.topScored.length
-    ? c.topScored.map((s, i) => `    ${i + 1}. ${s.ticker} ${s.score} (${s.decision}, ${s.targetType ?? "—"})`).join("\n")
-    : "    (none scored)";
+  // Score Distribution (of candidates)
+  const sd = c.scoreDistribution;
+  const lowLabel = sd.lowFloor != null ? `${sd.lowFloor}–59` : "<60";
+  L.push("📊 Score Distribution");
+  L.push(`• 70+:   ${sd.high}`);
+  L.push(`• 60–69: ${sd.mid}`);
+  L.push(`• ${lowLabel}: ${sd.low}`);
+  L.push("");
 
+  // Target Types
   const tt = c.targetTypes;
-  return [
-    `📋 OBSERVE — Funnel report · ${dataAsOf} · ${strategyVersion ?? "?"}`,
-    "(measurement, not a recommendation)",
-    "",
-    `Watchlist scanned: ${c.watchlist}`,
-    `Fresh coverage: ${c.freshCoverage.fresh}/${c.freshCoverage.total} (${c.freshCoverage.pct}%)  ·  NO_DATA: ${c.freshCoverage.noData}`,
-    `Reaching scoring: ${c.reachingScoring}`,
-    `BUY_CANDIDATE: ${c.buyCandidates}  (threshold ${threshold ?? "?"})`,
-    "",
-    `Gate rejections (total NO_SIGNAL ${c.gateBreakdown.totalNoSignal}):`,
-    ...(gateLines.length ? gateLines : ["    (none)"]),
-    "",
-    "Target type (rows that derived a target):",
-    `    RESISTANCE: ${tt.RESISTANCE}  ·  PROJECTED_ATR: ${tt.PROJECTED_ATR}  ·  RES_FLOORED: ${tt.RESISTANCE_FLOORED_BY_PROJECTED_ATR}`,
-    "",
-    "Top scored:",
-    top,
-    "",
-    `Outcomes: +${c.outcomes.newlyOpened} new  ·  ${c.outcomes.open} open  ·  ${c.outcomes.closed} closed (cumulative)`,
-    "",
-    "small-n, preliminary · don't pool across strategyVersion",
-  ].join("\n");
+  L.push("🎯 Target Types");
+  L.push(`• Resistance:    ${tt.RESISTANCE}`);
+  L.push(`• Projected ATR: ${tt.PROJECTED_ATR}`);
+  L.push(`• ATR Floored:   ${tt.RESISTANCE_FLOORED_BY_PROJECTED_ATR}`);
+  L.push("");
+
+  // Top Sectors (of candidates) — omitted when there are no candidates
+  if (c.sectorBreakdown.length) {
+    L.push(`🏭 Top Sectors (of ${c.buyCandidates} candidates)`);
+    const top5 = c.sectorBreakdown.slice(0, 5);
+    L.push(...top5.map((x) => `• ${prettySector(x.sector)}: ${x.count}`));
+    const more = c.sectorBreakdown.length - top5.length;
+    if (more > 0) L.push(`• +${more} more`);
+    L.push("");
+  }
+
+  // Top 5 setups
+  L.push("🏆 Top 5 Today");
+  const top = c.topScored.slice(0, 5);
+  L.push(...(top.length ? top.map((s, i) => `${i + 1}. ${s.ticker} ${s.score}`) : ["(none scored)"]));
+  L.push("");
+
+  // Outcomes
+  L.push("📈 Outcomes");
+  L.push(`• New today: ${c.outcomes.newlyOpened}`);
+  L.push(`• Open: ${c.outcomes.open}`);
+  L.push(`• Closed: ${c.outcomes.closed}`);
+  L.push("");
+
+  L.push(DIVIDER);
+  L.push("small-n, preliminary");
+  L.push("don't pool across strategyVersion");
+  return L.join("\n");
 }
