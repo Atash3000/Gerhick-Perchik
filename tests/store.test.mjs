@@ -76,9 +76,35 @@ test("writeSnapshot records raw metrics from marketData for tuning", async () =>
   const { Item } = client.calls[0];
   assert.equal(Item.metrics.rsi, 58);
   assert.equal(Item.metrics.volumeRatio, 1.5);
-  assert.equal(Item.metrics.nearestSupport, 98);
-  assert.equal(Item.metrics.nearestResistance, 110);
+  assert.equal(Item.metrics.nearestSupport.price, 98);
+  assert.equal(Item.metrics.nearestResistance.price, 110);
   assert.equal(Item.metrics.daysToEarnings, 20);
+});
+
+test("writeSnapshot stores the FULL support/resistance level, not just the price", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });
+  const md = {
+    close: 100, atr: 2, rsi: 58, ma50: 95, ma200: 90, volume: 1_000_000, avgVolume30: 1_000_000,
+    nearestSupport: { price: 98.004, touches: 8, strength: 0.7321, brokenSupport: false },
+    nearestResistance: { price: 110.2, touches: 3, strength: 0.5, brokenSupport: false },
+  };
+  await store.writeSnapshot(buyResult, { asOf: "2026-06-18", marketData: md });
+  const { Item } = client.calls[0];
+  // touches/strength/brokenSupport must survive to the DB (the most "Gerchik" data).
+  assert.deepEqual(Item.metrics.nearestSupport, { price: 98, touches: 8, strength: 0.7321, brokenSupport: false });
+  assert.equal(Item.metrics.nearestResistance.touches, 3);
+  assert.equal(Item.metrics.nearestResistance.brokenSupport, false);
+});
+
+test("writeSnapshot: missing level fields → nulls (never undefined); no level → null", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });
+  const md = { close: 100, atr: 2, nearestSupport: { price: 98 }, nearestResistance: null };
+  await store.writeSnapshot(buyResult, { asOf: "2026-06-18", marketData: md });
+  const { Item } = client.calls[0];
+  assert.deepEqual(Item.metrics.nearestSupport, { price: 98, touches: null, strength: null, brokenSupport: null });
+  assert.equal(Item.metrics.nearestResistance, null);
 });
 
 test("writeSnapshot captures ATR distances + per-share risk/reward + sectorStrengthPct", async () => {
