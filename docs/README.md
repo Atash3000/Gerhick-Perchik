@@ -53,7 +53,8 @@ gerchik-perchik/
    the gates, derives stop/target/R:R, and produces a 0–100 score + breakdown.
    See [`marketdata.md`](./marketdata.md) and [`scoring.md`](./scoring.md).
 5. **Persist** (Phase 4): a `gp-snapshots` row per name; a `gp-outcomes` row per
-   `BUY_CANDIDATE`.
+   `BUY_CANDIDATE`. The full snapshot schema is in
+   [`snapshots.md`](./snapshots.md).
 6. **Alert** (Phase 6): OBSERVE-mode Telegram message for candidates.
 7. **Label** (Phase 5): the labeler walks each open signal forward and records the
    real, after-cost outcome.

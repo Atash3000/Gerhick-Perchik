@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { assessScanHealth, shouldOpenOutcome, createSectorCounter } from "../lambdas/scanner/handler.mjs";
+import { assessScanHealth, shouldOpenOutcome, createSectorCounter, fetchErrorMarketData } from "../lambdas/scanner/handler.mjs";
 
 test("createSectorCounter: seeds from open outcomes and counts by sector", () => {
   const c = createSectorCounter([
@@ -36,6 +36,16 @@ test("shouldOpenOutcome: open a BUY_CANDIDATE only if no position already open",
   assert.equal(shouldOpenOutcome("BUY_CANDIDATE", "MSFT", open), false); // already open → skip
   assert.equal(shouldOpenOutcome("NO_SIGNAL", "AAPL", open), false);     // not a candidate
   assert.equal(shouldOpenOutcome("NO_DATA", "AAPL", open), false);
+});
+
+test("fetchErrorMarketData: converts fetch exceptions into NO_DATA-compatible market data", () => {
+  const md = fetchErrorMarketData("MMC", new Error("Tiingo returned no bars for MMC"));
+  assert.deepEqual(md, {
+    ticker: "MMC",
+    fresh: false,
+    reason: "fetch error: Tiingo returned no bars for MMC",
+    dataAsOf: null,
+  });
 });
 
 test("healthy scan: snapshots written, low errors, full coverage", () => {

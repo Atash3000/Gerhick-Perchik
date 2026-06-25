@@ -67,6 +67,19 @@ export function createSectorCounter(openOutcomes = []) {
   };
 }
 
+// Convert a per-ticker market-data exception into the same stale/missing-data shape
+// scoring already understands. That lets the scan write a NO_DATA snapshot for the
+// enabled ticker instead of silently dropping it from the day's research universe.
+export function fetchErrorMarketData(ticker, err) {
+  const msg = err?.message ? String(err.message) : "unknown fetch error";
+  return {
+    ticker,
+    fresh: false,
+    reason: `fetch error: ${msg}`,
+    dataAsOf: null,
+  };
+}
+
 export function assessScanHealth({ expectedCount, snapshotsWritten, errorCount, freshDataCount }) {
   if (!expectedCount) return { healthy: true, reason: null }; // nothing to scan
   if (snapshotsWritten === 0) {
@@ -199,7 +212,8 @@ export async function handler(event) {
 
   // --- Pass 1: gather market data + fundamentals for the whole universe.
   // Finnhub calls are throttled inside marketdata/fundamentals (see ratelimit.mjs).
-  // A per-ticker fetch failure is logged and the name is dropped from this run.
+  // A per-ticker fetch failure is logged as an ERROR, but still carried forward as
+  // NO_DATA so the snapshots table preserves the full enabled universe for the day.
   const gathered = [];
   for (const entry of watchlist) {
     try {
@@ -209,6 +223,7 @@ export async function handler(event) {
     } catch (err) {
       tally.ERROR += 1;
       console.error(`gp_scan_failed: ${entry.ticker}: ${err.message}`);
+      gathered.push({ entry, md: fetchErrorMarketData(entry.ticker, err), fundamentals: null });
     }
   }
 

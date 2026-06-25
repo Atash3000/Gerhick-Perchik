@@ -44,6 +44,7 @@ labeler later):
   `epsGrowthQtr`, `salesGrowthQtr`, `annualEpsGrowth`, `grossMarginTTM`, `roeTTM`,
   `debtToEquity`) — all **captured, not scored** — for Phase 8 analysis. Every
   decision is snapshotted — including `NO_SIGNAL`, gate rejections, and `NO_DATA`.
+  See [`snapshots.md`](./snapshots.md) for the complete field-by-field schema.
 - **`gp-outcomes`** — one row per **new entry**, opened with `status: "OPEN"`. A
   `BUY_CANDIDATE` opens a new outcome (and alerts) **only when the ticker has no
   outcome already OPEN** — a name that qualifies many days running does NOT open a
@@ -56,7 +57,9 @@ labeler later):
   existing (possibly already-labeled) outcome. The Phase 5 labeler fills in the
   result fields.
 
-Per-name write failures are logged (`gp_scan_failed`) and skipped — one bad write
+Per-name market-data fetch failures are logged (`gp_scan_failed`) and still
+snapshotted as `NO_DATA` so the daily snapshot universe stays aligned with the
+enabled watchlist. Per-name write failures are logged and skipped — one bad write
 never sinks the scan.
 
 The scan summary carries a **coverage** block (B7): `expectedCount`, `scannedCount`,
