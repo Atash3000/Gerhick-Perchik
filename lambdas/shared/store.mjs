@@ -126,6 +126,68 @@ export function snapshotMetrics(md) {
   };
 }
 
+// Momentum-v1 snapshot metrics. This is intentionally smaller than the legacy
+// gp-2.0.0 metrics block: keep only fields used by Strategy-v1 or useful for
+// momentum analysis, and drop level/breakout/fundamental DNA.
+export function momentumSnapshotMetrics(md) {
+  const m = md ?? {};
+  const round2 = (v) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
+  const volumeRatio =
+    typeof m.volume === "number" && m.avgVolume30 > 0
+      ? Math.round((m.volume / m.avgVolume30) * 100) / 100
+      : null;
+
+  return {
+    close: round2(m.close),
+    ma50: round2(m.ma50),
+    ma100: round2(m.ma100),
+    ma200: round2(m.ma200),
+    atr: round2(m.atr),
+    avgVolume30: typeof m.avgVolume30 === "number" && Number.isFinite(m.avgVolume30) ? m.avgVolume30 : null,
+    volumeRatio,
+    return63d: typeof m.return63d === "number" && Number.isFinite(m.return63d) ? m.return63d : null,
+    return126d: typeof m.return126d === "number" && Number.isFinite(m.return126d) ? m.return126d : null,
+    return252d: typeof m.return252d === "number" && Number.isFinite(m.return252d) ? m.return252d : null,
+  };
+}
+
+function nullableNumber(v, dp = null) {
+  if (typeof v !== "number" || !Number.isFinite(v)) return null;
+  if (dp == null) return v;
+  const f = 10 ** dp;
+  return Math.round(v * f) / f;
+}
+
+function nullableBool(v) {
+  return typeof v === "boolean" ? v : null;
+}
+
+function momentumChecks(checks) {
+  return {
+    price: nullableBool(checks?.price),
+    dollarVol: nullableBool(checks?.dollarVol),
+    trend: nullableBool(checks?.trend),
+    noBigMove: nullableBool(checks?.noBigMove),
+  };
+}
+
+// Persist one canonical momentum-v1 exit vocabulary. evaluateExits() emits compact
+// internal constants; snapshots/outcomes store the schema's snake_case values.
+export function normalizeMomentumExitReason(reason) {
+  if (reason == null) return null;
+  const map = {
+    HARD_STOP: "hard_stop",
+    hard_stop: "hard_stop",
+    TRAIL: "trailing_stop",
+    trailing_stop: "trailing_stop",
+    TREND: "trend_exit",
+    trend_exit: "trend_exit",
+    RANK: "rank_exit",
+    rank_exit: "rank_exit",
+  };
+  return map[reason] ?? null;
+}
+
 // Build a store bound to a DynamoDB document client + table names. Pass a fake
 // client in tests; in the Lambda, defaults read the env + a real client.
 export function createStore({ client, snapshotsTable, outcomesTable, watchlistTable, positionsTable } = {}) {
@@ -194,6 +256,49 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
       return { table: snapTable, pk: item.pk, sk: item.sk };
     },
 
+    // Momentum-v1 snapshot shape. Same table/keys as legacy snapshots, but the item
+    // body follows docs/Snapshot-Schema-momentum.md and drops gp-2.0.0 score/target
+    // fields. Step 4b will switch the scanner to this writer.
+    async writeMomentumSnapshot(result, { asOf, sector = null, marketData = null, spy = null } = {}) {
+      const day = result.dataAsOf ?? asOf;
+      if (!day) throw new Error(`cannot snapshot ${result.ticker}: no as-of date`);
+      const item = {
+        pk: `TICKER#${result.ticker}`,
+        sk: epochDay(day),
+        ticker: result.ticker,
+        dataAsOf: result.dataAsOf ?? day,
+        strategyVersion: result.strategyVersion ?? STRATEGY_VERSION,
+        scannedAt: new Date().toISOString(),
+
+        decision: result.decision,
+        reason: result.reason ?? null,
+        momentum: nullableNumber(result.momentum),
+        slope: nullableNumber(result.slope),
+        r2: nullableNumber(result.r2),
+        rank: nullableNumber(result.rank),
+        rankPct: nullableNumber(result.rankPct),
+        inEntryZone: nullableBool(result.inEntryZone),
+        inExitZone: nullableBool(result.inExitZone),
+
+        eligible: result.eligible === true,
+        checks: momentumChecks(result.checks),
+        insufficientHistory: result.insufficientHistory === true,
+
+        regimeOn: nullableBool(result.regimeOn),
+        spy: spy ?? null,
+        sector,
+        metrics: momentumSnapshotMetrics(marketData),
+
+        entry: nullableNumber(result.entry, 2),
+        stop: nullableNumber(result.stop, 2),
+        peakClose: nullableNumber(result.peakClose, 2),
+        shares: nullableNumber(result.shares),
+        exitReason: normalizeMomentumExitReason(result.exitReason),
+      };
+      await doc.send(new PutCommand({ TableName: snapTable, Item: item }));
+      return { table: snapTable, pk: item.pk, sk: item.sk };
+    },
+
     // Open an outcome row for a BUY_CANDIDATE. Created once only: the conditional
     // put fails (silently, here) if the signal already exists, so re-running the
     // scan can't reset or overwrite a labeled outcome.
@@ -224,6 +329,47 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
         rsRaw: rs?.rsRaw ?? null,
         rsRank: rs?.rsRank ?? null,
         rsVsSpy: rs?.rsVsSpy ?? null,
+        openedAt: new Date().toISOString(),
+      };
+      try {
+        await doc.send(
+          new PutCommand({
+            TableName: outTable,
+            Item: item,
+            ConditionExpression: "attribute_not_exists(pk)",
+          })
+        );
+        return { opened: true, pk: item.pk, sk: item.sk };
+      } catch (err) {
+        if (err?.name === "ConditionalCheckFailedException") {
+          return { opened: false, reason: "already open", pk: item.pk };
+        }
+        throw err;
+      }
+    },
+
+    // Momentum-v1 entry outcome. Same idempotent conditional put as openOutcome(),
+    // but stores the momentum entry snapshot instead of gp-2.0.0 score/target data.
+    async openMomentumOutcome(result, { sector = null } = {}) {
+      const entryDate = result.dataAsOf;
+      if (!entryDate) throw new Error(`cannot open outcome ${result.ticker}: no entry date`);
+      const item = {
+        pk: `SIGNAL#${result.ticker}#${entryDate}`,
+        sk: epochMs(entryDate),
+        ticker: result.ticker,
+        sector,
+        entryDate,
+        status: "OPEN",
+        strategyVersion: result.strategyVersion ?? STRATEGY_VERSION,
+        entry: nullableNumber(result.entry),
+        stop: nullableNumber(result.stop),
+        momentum: nullableNumber(result.momentum),
+        slope: nullableNumber(result.slope),
+        r2: nullableNumber(result.r2),
+        rank: nullableNumber(result.rank),
+        rankPct: nullableNumber(result.rankPct),
+        shares: nullableNumber(result.shares),
+        exitReason: normalizeMomentumExitReason(result.exitReason),
         openedAt: new Date().toISOString(),
       };
       try {
