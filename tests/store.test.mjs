@@ -264,6 +264,212 @@ test("writeSnapshot throws when no as-of date is available at all", async () => 
   );
 });
 
+const momentumResult = {
+  ticker: "MSFT",
+  decision: "BUY_CANDIDATE",
+  reason: "ranked_in_entry_zone",
+  strategyVersion: "gp-momentum-1.0.0",
+  dataAsOf: "2026-06-18",
+  momentum: 0.423456,
+  slope: 0.0017,
+  r2: 0.91,
+  rank: 3,
+  rankPct: 84.21,
+  inEntryZone: true,
+  inExitZone: false,
+  eligible: true,
+  checks: { price: true, dollarVol: true, trend: true, noBigMove: true },
+  insufficientHistory: false,
+  regimeOn: true,
+  entry: 100.126,
+  stop: 95.126,
+  peakClose: 104.444,
+  shares: 150,
+  exitReason: "TRAIL",
+};
+
+const momentumMarketData = {
+  close: 100.126,
+  ma50: 96.123,
+  ma100: 92.456,
+  ma200: 88.789,
+  atr: 2.123,
+  volume: 1_500_000,
+  avgVolume30: 1_000_000,
+  return63d: 12.3,
+  return126d: 24.5,
+  return252d: 41.8,
+  // Legacy fields must not leak into the momentum metrics block.
+  nearestSupport: { price: 98 },
+  nearestResistance: { price: 110 },
+  high20d: 101,
+  rsRaw: 50,
+};
+
+function assertNoUndefined(value) {
+  if (Array.isArray(value)) {
+    for (const v of value) assertNoUndefined(v);
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const [k, v] of Object.entries(value)) {
+      assert.notEqual(v, undefined, `${k} is undefined`);
+      assertNoUndefined(v);
+    }
+  }
+}
+
+test("writeMomentumSnapshot writes the gp-momentum snapshot contract and drops gp-2.0.0 fields", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });
+  const spy = { spyBelow200ma: false, asOf: "2026-06-18", return126d: 12.1 };
+
+  const ref = await store.writeMomentumSnapshot(momentumResult, {
+    asOf: "2026-06-18",
+    sector: "Technology",
+    marketData: momentumMarketData,
+    spy,
+  });
+
+  assert.deepEqual(ref, { table: "T-snap", pk: "TICKER#MSFT", sk: epochDay("2026-06-18") });
+  const { TableName, Item } = client.calls[0];
+  assert.equal(TableName, "T-snap");
+  assert.equal(Item.pk, "TICKER#MSFT");
+  assert.equal(Item.sk, epochDay("2026-06-18"));
+  assert.equal(Item.strategyVersion, "gp-momentum-1.0.0");
+  assert.equal(Item.decision, "BUY_CANDIDATE");
+  assert.equal(typeof Item.scannedAt, "string");
+
+  assert.equal(Item.momentum, 0.423456);
+  assert.equal(Item.slope, 0.0017);
+  assert.equal(Item.r2, 0.91);
+  assert.equal(Item.rank, 3);
+  assert.equal(Item.rankPct, 84.21);
+  assert.equal(Item.inEntryZone, true);
+  assert.equal(Item.inExitZone, false);
+  assert.equal(Item.eligible, true);
+  assert.deepEqual(Item.checks, { price: true, dollarVol: true, trend: true, noBigMove: true });
+  assert.equal(Item.insufficientHistory, false);
+  assert.equal(Item.regimeOn, true);
+  assert.deepEqual(Item.spy, spy);
+  assert.equal(Item.sector, "Technology");
+
+  assert.deepEqual(Item.metrics, {
+    close: 100.13,
+    ma50: 96.12,
+    ma100: 92.46,
+    ma200: 88.79,
+    atr: 2.12,
+    avgVolume30: 1_000_000,
+    volumeRatio: 1.5,
+    return63d: 12.3,
+    return126d: 24.5,
+    return252d: 41.8,
+  });
+  assert.equal(Item.entry, 100.13);
+  assert.equal(Item.stop, 95.13);
+  assert.equal(Item.peakClose, 104.44);
+  assert.equal(Item.shares, 150);
+  assert.equal(Item.exitReason, "trailing_stop");
+
+  for (const dead of [
+    "score", "breakdown", "gates", "target", "riskReward", "riskPerShare",
+    "rewardPerShare", "targetType", "projectedTarget", "resistanceTarget",
+    "targetAtrMultiple", "sectorStrengthPct", "fundamentals",
+  ]) {
+    assert.equal(Object.hasOwn(Item, dead), false, `${dead} should not be stored`);
+  }
+  for (const deadMetric of [
+    "nearestSupport", "nearestResistance", "distanceToSupportAtr",
+    "distanceToResistanceAtr", "minerviniAligned", "breakout20", "breakout55", "rsRaw",
+  ]) {
+    assert.equal(Object.hasOwn(Item.metrics, deadMetric), false, `${deadMetric} should not be stored`);
+  }
+  assertNoUndefined(Item);
+});
+
+test("writeMomentumSnapshot stores excluded/no-data rows without old score fields", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });
+
+  await store.writeMomentumSnapshot({
+    ticker: "FOO",
+    decision: "NOT_ELIGIBLE",
+    reason: "below_trend_ma",
+    dataAsOf: "2026-06-18",
+    eligible: false,
+    checks: { price: true, dollarVol: true, trend: false, noBigMove: true },
+    insufficientHistory: false,
+    regimeOn: true,
+  }, { marketData: { close: 42, ma100: 45, atr: 1.25 } });
+
+  const { Item } = client.calls[0];
+  assert.equal(Item.decision, "NOT_ELIGIBLE");
+  assert.equal(Item.momentum, null);
+  assert.equal(Item.rank, null);
+  assert.equal(Item.eligible, false);
+  assert.equal(Item.checks.trend, false);
+  assert.equal(Item.metrics.close, 42);
+  assert.equal(Object.hasOwn(Item, "score"), false);
+  assertNoUndefined(Item);
+});
+
+test("openMomentumOutcome opens the gp-momentum outcome contract and drops gp-2.0.0 fields", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });
+
+  const r = await store.openMomentumOutcome(momentumResult, { sector: "Technology" });
+
+  assert.equal(r.opened, true);
+  const { TableName, Item, ConditionExpression } = client.calls[0];
+  assert.equal(TableName, "T-out");
+  assert.equal(ConditionExpression, "attribute_not_exists(pk)");
+  assert.equal(Item.pk, "SIGNAL#MSFT#2026-06-18");
+  assert.equal(Item.sk, epochMs("2026-06-18"));
+  assert.equal(Item.status, "OPEN");
+  assert.equal(Item.strategyVersion, "gp-momentum-1.0.0");
+  assert.equal(Item.entry, 100.126);
+  assert.equal(Item.stop, 95.126);
+  assert.equal(Item.momentum, 0.423456);
+  assert.equal(Item.slope, 0.0017);
+  assert.equal(Item.r2, 0.91);
+  assert.equal(Item.rank, 3);
+  assert.equal(Item.rankPct, 84.21);
+  assert.equal(Item.shares, 150);
+  assert.equal(Item.exitReason, "trailing_stop");
+  assert.equal(typeof Item.openedAt, "string");
+
+  for (const dead of [
+    "score", "breakdown", "target", "riskReward", "targetType", "projectedTarget",
+    "resistanceTarget", "targetAtrMultiple", "rsRaw", "rsRank", "rsVsSpy",
+  ]) {
+    assert.equal(Object.hasOwn(Item, dead), false, `${dead} should not be stored`);
+  }
+  assertNoUndefined(Item);
+});
+
+test("openMomentumOutcome keeps the existing idempotent conditional-put behavior", async () => {
+  const client = fakeClient({ throwOnce: true });
+  const store = createStore({ client, outcomesTable: "T-out" });
+  const r = await store.openMomentumOutcome(momentumResult, {});
+  assert.equal(r.opened, false);
+  assert.match(r.reason, /already open/);
+});
+
+test("momentum persistence normalizes internal exit reasons to schema values", async () => {
+  for (const [raw, stored] of [
+    ["HARD_STOP", "hard_stop"],
+    ["TRAIL", "trailing_stop"],
+    ["TREND", "trend_exit"],
+    ["RANK", "rank_exit"],
+  ]) {
+    const client = fakeClient();
+    const store = createStore({ client, snapshotsTable: "T-snap" });
+    await store.writeMomentumSnapshot({ ...momentumResult, exitReason: raw }, { asOf: "2026-06-18" });
+    assert.equal(client.calls[0].Item.exitReason, stored);
+  }
+});
+
 test("openOutcome opens a conditional OPEN row with the right keys + RS capture", async () => {
   const client = fakeClient();
   const store = createStore({ client, snapshotsTable: "T-snap", outcomesTable: "T-out" });
