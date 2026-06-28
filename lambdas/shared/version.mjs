@@ -5,4 +5,4 @@
 //
 // Bump ONLY when the scoring formula or level/derivation logic changes, and ONLY
 // on explicit human instruction — never silently (see CLAUDE.md).
-export const STRATEGY_VERSION = "gp-2.0.0";
+export const STRATEGY_VERSION = "gp-momentum-1.0.0";

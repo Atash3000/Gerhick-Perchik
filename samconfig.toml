@@ -24,14 +24,21 @@ tags = "Project=gerchik-perchik"
 # Pinned parameters. NOTE: cron schedules are NOT here — SAM space-splits
 # parameter values and corrupts a cron string, so the crons are inlined as
 # literals in template.yaml instead. Only space-free values are safe here.
-# - ScheduleEnabled=true: the system is live in observe mode and meant to run, so
-#   deploys no longer silently disable the schedules (runtime /stop still works
-#   until the next deploy).
+# - ScheduleEnabled=false: PAUSED for the gp-2.0.0 → gp-momentum-1.0.0 migration.
+#   STRATEGY_VERSION is now "gp-momentum-1.0.0", but the scanner still runs the OLD
+#   gate-and-score logic until the momentum scanner ships (build-order step 4). If
+#   the schedule ran now it would write old-logic snapshots/outcomes stamped with
+#   the momentum version — mislabeled records that corrupt the (just-wiped) tables
+#   and break "never pool across strategy versions". A runtime /stop can't protect
+#   this because the next deploy re-enables the rule from this param, so the pause
+#   lives here (deploy-time) for the duration of the migration.
+#   RE-ENABLE (back to "true") only once the momentum scanner is live in step 4, so
+#   the momentum label finally matches momentum logic.
 # - Telegram SSM paths pinned: the Lambda reads /gerchik-perchik/telegram/*, and
 #   CloudFormation otherwise keeps stale pre-rename values (UsePreviousValue),
 #   leaving the IAM role scoped to old paths → AccessDenied. Pinning matches code.
 parameter_overrides = [
-  "ScheduleEnabled=true",
+  "ScheduleEnabled=false", # PAUSED for the momentum migration — see note above; re-enable at step 4
   # Dedicated Gerchik-Perchik Tiingo key (issue #33). Pinning this re-scopes the
   # scanner/labeler ssm:GetParameter IAM to this ARN (template Resource follows
   # ${TiingoKeyPath}) and sets TIINGO_KEY_PATH env → KEY_PATHS → gp_keypaths log.
