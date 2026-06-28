@@ -145,3 +145,51 @@ test("riskGovernor: NEVER emits a sell/close signal — it only gates new risk",
   const r = riskGovernor({ weeklyPct: 30, monthlyPct: 30, fromPeakPct: 40 }, CFG);
   assert.deepEqual(Object.keys(r).sort(), ["blockNewBuys", "haltAllNew", "reason"].sort());
 });
+
+// --- review hardening: no lookahead, sign-agnostic governor, fail-loud ------
+
+test("evaluateExits: NO lookahead — today's close cannot retroactively trigger today's low", () => {
+  // Prior stop 90 is NOT hit by today's low (92). Today's close (110) raises the
+  // trail to 100, and 92 < 100 — but the low is checked against the PRIOR stop, so
+  // this must HOLD and advance the trail for next day. (Regression for finding #1.)
+  const r = evaluateExits(
+    { entry: 100, stop: 90, peakClose: 100 },
+    { high: 111, low: 92, close: 110 },
+    { atr: 4, trendSma: 95, inExitZone: false },
+    CFG
+  );
+  assert.equal(r.exit, false);
+  assert.equal(r.stop, 100); // trail advanced from today's close, for NEXT day
+  assert.equal(r.peakClose, 110);
+});
+
+test("evaluateExits: a stop-out exits at the PRIOR stop, never a close-raised level", () => {
+  // Low 89 pierces the prior stop 90. Today's close 105 would raise the trail, but
+  // the exit must be the prior stop (90), not 95.
+  const r = evaluateExits(
+    { entry: 100, stop: 90, peakClose: 100 },
+    { high: 106, low: 89, close: 105 },
+    { atr: 4, trendSma: 95, inExitZone: false },
+    CFG
+  );
+  assert.equal(r.exit, true);
+  assert.equal(r.reason, "HARD_STOP");
+  assert.equal(r.stop, 90); // no close lookahead
+});
+
+test("riskGovernor: sign-agnostic — blocks on positive magnitude OR signed-negative drawdown", () => {
+  assert.equal(riskGovernor({ weeklyPct: 9 }, CFG).blockNewBuys, true);
+  assert.equal(riskGovernor({ weeklyPct: -9 }, CFG).blockNewBuys, true); // magnitude is what matters
+});
+
+test("evaluateExits: throws on non-finite inputs rather than silently mis-deciding a stop", () => {
+  assert.throws(
+    () => evaluateExits(
+      { entry: 100, stop: 90, peakClose: 100 },
+      { high: 101, low: 99, close: 100 },
+      { atr: NaN, trendSma: 95, inExitZone: false }, // bad ATR → NaN stop if unguarded
+      CFG
+    ),
+    /non-finite/
+  );
+});
