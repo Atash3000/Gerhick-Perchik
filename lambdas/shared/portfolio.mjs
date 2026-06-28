@@ -143,3 +143,135 @@ export function rankByMomentum(items, config) {
     };
   });
 }
+
+// ===========================================================================
+// Step-3 sub-PR 2: position sizing (§4), exits (§5), risk governor (§6).
+// Pure decision functions; the scanner orchestrates them in step 4. Reuses
+// atrWilder (marketdata.mjs) for ATR at the call site — not re-implemented here.
+// ===========================================================================
+
+// Position sizing (§4): equal-risk, ATR-based. `entry` and `atr` are in price
+// units (`atr` is ATR over config.atrPeriod, computed by the caller via atrWilder);
+// `accountValue` is the sizing base. Returns
+//   { shares, stop, perShareRisk, riskAmount, notional, capped }
+// or null when a real position can't be sized (bad inputs / shares <= 0).
+//   stop          = entry − kStop×ATR
+//   shares        = floor( accountValue × riskPctPerTrade% / (kStop×ATR) )
+//   capped        = true if the positionCapPct concentration cap bound the size
+// Low-vol names get more shares, high-vol fewer — equal risk per position.
+export function sizePosition(entry, atr, accountValue, config) {
+  const { kStop, riskPctPerTrade, positionCapPct } = config ?? {};
+  if (![entry, atr, accountValue, kStop, riskPctPerTrade, positionCapPct].every((v) => Number.isFinite(v))) {
+    return null;
+  }
+  if (entry <= 0 || atr <= 0 || accountValue <= 0 || kStop <= 0) return null;
+
+  const perShareRisk = kStop * atr;
+  if (!(perShareRisk > 0)) return null;
+  const stop = round(entry - perShareRisk, 4);
+  if (stop <= 0) return null;
+
+  const riskBudget = accountValue * (riskPctPerTrade / 100);
+  let shares = Math.floor(riskBudget / perShareRisk);
+
+  // §4 concentration cap: no single position may exceed positionCapPct% of account.
+  const capShares = Math.floor((accountValue * (positionCapPct / 100)) / entry);
+  let capped = false;
+  if (shares > capShares) {
+    shares = capShares;
+    capped = true;
+  }
+  if (shares <= 0) return null;
+
+  return {
+    shares,
+    stop,
+    perShareRisk: round(perShareRisk, 4),
+    riskAmount: round(shares * perShareRisk, 2),
+    notional: round(shares * entry, 2),
+    capped,
+  };
+}
+
+// Chandelier trailing stop (§5): the stop ratchets UP only, never down.
+//   peakClose = max(prior peak, today's close)
+//   trail     = peakClose − kStop×ATR
+//   stop      = max(prior stop, trail)        ← never lowered
+// Returns the position with peakClose/stop advanced.
+export function updateTrailingStop(position, close, atr, config) {
+  if (![position?.peakClose, position?.stop, close, atr, config?.kStop].every((v) => Number.isFinite(v))) {
+    throw new TypeError("updateTrailingStop: non-finite input");
+  }
+  const peakClose = Math.max(position.peakClose, close);
+  const trail = peakClose - config.kStop * atr;
+  const stop = round(Math.max(position.stop, trail), 4);
+  return { ...position, peakClose, stop };
+}
+
+// Evaluate a held position at a review (§5). `bar` = today's { high, low, close };
+// `context` = { atr, trendSma, inExitZone }. Fires the first applicable exit by
+// priority STOP > TREND > RANK:
+//   STOP  — today's low <= the PRIOR stop. HARD_STOP if that stop is at/below entry
+//           (catastrophe floor), else TRAIL (locking in profit). Fills at the stop.
+//   TREND — close < trendSma (below the 100-day MA).
+//   RANK  — the name has fallen out of the top exitRankPct (context.inExitZone).
+// Stops are the daily check; trend/rank are weekly. Returns
+//   { exit, reason, stop, peakClose }  (stop/peakClose updated for persistence).
+export function evaluateExits(position, bar, context, config) {
+  // Fail loud on non-finite inputs — a NaN stop would silently never trigger, the
+  // most dangerous failure mode for an exit. (Full range-validation is issue #52.)
+  for (const v of [position?.entry, position?.stop, position?.peakClose, bar?.low, bar?.close, context?.atr, config?.kStop]) {
+    if (!Number.isFinite(v)) throw new TypeError("evaluateExits: non-finite input");
+  }
+
+  // 1. STOP first, against the PRIOR (start-of-day) stop — NOT a stop raised by
+  //    today's close. With only daily OHLC we can't know whether the low preceded
+  //    the close, so triggering today's low against a close-raised stop would be
+  //    lookahead. The exit fills at the prior stop.
+  if (bar.low <= position.stop) {
+    return {
+      exit: true,
+      reason: position.stop <= position.entry ? "HARD_STOP" : "TRAIL",
+      stop: position.stop,
+      peakClose: position.peakClose,
+    };
+  }
+
+  // 2. Not stopped → advance the chandelier trail from today's CLOSE for the next
+  //    day's stop (§5 trails on peak_close, so bar.high is intentionally unused),
+  //    then evaluate the weekly close-based exits.
+  const { peakClose, stop } = updateTrailingStop(position, bar.close, context.atr, config);
+  if (context.trendSma != null && bar.close < context.trendSma) {
+    return { exit: true, reason: "TREND", stop, peakClose };
+  }
+  if (context.inExitZone) {
+    return { exit: true, reason: "RANK", stop, peakClose };
+  }
+  return { exit: false, reason: null, stop, peakClose };
+}
+
+// Risk governor (§6): hard circuit breakers that BLOCK NEW RISK ONLY. It never
+// sells — existing positions always keep their own stops (evaluateExits). `drawdowns`
+// carries drawdown MAGNITUDES in % — sign is ignored, so both 9 and -9 mean "down
+// 9%" (robust to whichever convention the caller uses). Returns
+//   { blockNewBuys, haltAllNew, reason }   ← no sell signal exists, by design.
+//   weekly  >= weeklyDdLimit  → block new buys (until next week)
+//   monthly >= monthlyDdLimit → block new entries (this month)
+//   peak    >= maxDdLimit     → halt ALL new trading (full review)
+export function riskGovernor(drawdowns, config) {
+  const { weeklyDdLimit, monthlyDdLimit, maxDdLimit } = config;
+  const wk = Math.abs(Number(drawdowns?.weeklyPct) || 0);
+  const mo = Math.abs(Number(drawdowns?.monthlyPct) || 0);
+  const peak = Math.abs(Number(drawdowns?.fromPeakPct) || 0);
+
+  if (peak >= maxDdLimit) {
+    return { blockNewBuys: true, haltAllNew: true, reason: `max drawdown ${peak}% >= ${maxDdLimit}%` };
+  }
+  if (mo >= monthlyDdLimit) {
+    return { blockNewBuys: true, haltAllNew: false, reason: `monthly drawdown ${mo}% >= ${monthlyDdLimit}%` };
+  }
+  if (wk >= weeklyDdLimit) {
+    return { blockNewBuys: true, haltAllNew: false, reason: `weekly drawdown ${wk}% >= ${weeklyDdLimit}%` };
+  }
+  return { blockNewBuys: false, haltAllNew: false, reason: null };
+}
