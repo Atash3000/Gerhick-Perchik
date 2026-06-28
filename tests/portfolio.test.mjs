@@ -133,3 +133,42 @@ test("rankByMomentum: names with insufficient history are dropped, not ranked", 
   const ranked = rankByMomentum(items, CFG);
   assert.deepEqual(ranked.map((r) => r.ticker), ["OK"]);
 });
+
+// --- malformed-input hardening (review findings #2, #3, #4) -----------------
+
+test("isEligible: a non-finite close → invalidData, never a NaN-laden result", () => {
+  const b = bars(150, (i) => 100 + i);
+  b[140].close = NaN;
+  const r = isEligible(b, CFG);
+  assert.equal(r.eligible, false);
+  assert.equal(r.invalidData, true);
+  assert.equal(r.checks, null);
+  assert.equal(r.metrics, null); // no NaN can reach persistence
+});
+
+test("isEligible: a non-finite or negative volume → invalidData", () => {
+  const b1 = bars(150, (i) => 100 + i);
+  b1[145].volume = NaN;
+  assert.equal(isEligible(b1, CFG).invalidData, true);
+
+  const b2 = bars(150, (i) => 100 + i);
+  b2[145].volume = -5;
+  assert.equal(isEligible(b2, CFG).invalidData, true);
+});
+
+test("isRegimeOn: missing/invalid config → null (never throws, never guesses)", () => {
+  const spy = closesOf(220, (i) => 300 + i);
+  assert.equal(isRegimeOn(spy, null), null);
+  assert.equal(isRegimeOn(spy, {}), null); // no regimeMa
+  assert.equal(isRegimeOn(spy, { regimeMa: NaN }), null);
+});
+
+test("rankByMomentum: ties break deterministically by ticker, not input order", () => {
+  // Two identical flat series → identical momentum (0). Supplied in non-alpha order.
+  const items = [
+    { ticker: "ZZZ", closes: closesOf(120, () => 100) },
+    { ticker: "AAA", closes: closesOf(120, () => 100) },
+  ];
+  const ranked = rankByMomentum(items, CFG);
+  assert.deepEqual(ranked.map((r) => r.ticker), ["AAA", "ZZZ"]); // ticker order, not input order
+});

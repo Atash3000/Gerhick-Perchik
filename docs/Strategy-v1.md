@@ -26,7 +26,7 @@ Once per week, on a **fixed day** (pick one, e.g. the first trading day of the w
 1. Passes the universe + liquidity gate (§1).
 2. The market regime is risk-on (§2).
 3. The stock closes **above its own 100-day SMA** (it's in its own uptrend).
-4. The stock has had **no single-day gap ≥ 15%** in the last 90 days (avoids unstable, news-whipsawed names).
+4. The stock has had **no single-day move ≥ 15%** in the last 90 days (avoids unstable, news-whipsawed names). *Interpretation pinned (step 3): "single-day move" is measured **close-to-close** (`|closeᵢ/closeᵢ₋₁ − 1|`), the canonical Clenow reading — it catches violent intraday days, not just overnight gaps. The original wording said "gap"; this clarifies the ambiguity in writing **before** the backtest, per the pre-registration discipline. No parameter value changed (still 15% / 90 days).*
 
 **Rank** every eligible candidate by the **momentum score**:
 

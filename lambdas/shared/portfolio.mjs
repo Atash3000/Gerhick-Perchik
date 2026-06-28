@@ -22,6 +22,9 @@ export const DOLLAR_VOL_WINDOW = 20;
 // is too little history to compute the SMA — the caller must abort rather than
 // guess the regime (a stale/short SPY feed is never scored as risk-on).
 export function isRegimeOn(spyCloses, config) {
+  // Guard a missing/invalid config (e.g. a partial row): no regime → null, never
+  // throw and never default to risk-on. (Full type/range validation is issue #52.)
+  if (!config || !Number.isFinite(config.regimeMa)) return null;
   if (!Array.isArray(spyCloses) || spyCloses.length < config.regimeMa) return null;
   const ma = sma(spyCloses, config.regimeMa);
   if (ma == null) return null;
@@ -50,7 +53,17 @@ export function isEligible(bars, config) {
 
   const need = Math.max(trendMa, gapWindow + 1, DOLLAR_VOL_WINDOW);
   if (!Array.isArray(bars) || bars.length < need) {
-    return { eligible: false, insufficientHistory: true, checks: null, metrics: null };
+    return { eligible: false, insufficientHistory: true, invalidData: false, checks: null, metrics: null };
+  }
+
+  // Malformed-data guard: every bar we actually use (the last `need`) must have a
+  // finite, positive close and a finite, non-negative volume. A bad bar must yield
+  // a clean invalid-data result — never NaN in checks/metrics that could later be
+  // persisted or reported.
+  for (const b of bars.slice(-need)) {
+    if (!Number.isFinite(b.close) || b.close <= 0 || !Number.isFinite(b.volume) || b.volume < 0) {
+      return { eligible: false, insufficientHistory: false, invalidData: true, checks: null, metrics: null };
+    }
   }
 
   const closes = bars.map((b) => b.close);
@@ -80,6 +93,7 @@ export function isEligible(bars, config) {
   return {
     eligible,
     insufficientHistory: false,
+    invalidData: false,
     checks,
     metrics: {
       price,
@@ -108,7 +122,10 @@ export function rankByMomentum(items, config) {
     if (m) scored.push({ ticker: it.ticker, momentum: m.momentum, slope: m.slope, r2: m.r2 });
   }
 
-  scored.sort((a, b) => b.momentum - a.momentum);
+  // Sort by momentum descending, with a deterministic ticker tiebreak so the
+  // ranking never depends on watchlist/scan order (ties are rare with real
+  // exp-regression floats, but possible with flat/rounded data).
+  scored.sort((a, b) => b.momentum - a.momentum || a.ticker.localeCompare(b.ticker));
 
   const n = scored.length;
   const entryCut = Math.ceil((config.entryRankPct / 100) * n);

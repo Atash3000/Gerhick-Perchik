@@ -156,8 +156,8 @@ Full detail and rationale: `docs/Strategy-v1.md`. Summary of the binding rules:
   their exits; the book drifts to **cash**. No shorting.
 - **Eligibility (per stock, before ranking):** liquid (price ≥ `minPrice`, 20-day avg
   dollar volume ≥ `minDollarVol`); closes **above its own `trendMa` (100-day) SMA**;
-  **no single-day gap ≥ `gapFilterPct` (15%)** in the last `gapFilterWindow` (90)
-  days.
+  **no single-day move ≥ `gapFilterPct` (15%)** in the last `gapFilterWindow` (90)
+  days — measured **close-to-close** (see Strategy-v1 §3; the field is `noBigMove`).
 - **Momentum score (the number "math decides"):**
   `momentum = annualized_slope( exp_regression( log(price), momentumLookback=90 ) ) × R²`.
   Fit log-price vs day index; annualize the slope; multiply by the regression R².
