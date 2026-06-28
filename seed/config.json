@@ -1,17 +1,37 @@
 {
   "pk": "CONFIG",
   "sk": "ACTIVE",
-  "buyScoreThreshold": 53,
-  "atrStopMultiple": 1.5,
-  "minRiskReward": 2.0,
-  "targetAtrMultiple": 3.0,
-  "maxCorrelatedPositions": 3,
   "alertMode": "observe",
-  "feeBps": 10,
-  "slippageBps": 5,
-  "timeoutTradingDays": 60,
+
+  "minPrice": 5,
+  "minDollarVol": 10000000,
+
+  "regimeMa": 200,
+  "trendMa": 100,
+
+  "momentumLookback": 90,
+  "gapFilterPct": 15,
+  "gapFilterWindow": 90,
+  "entryRankPct": 20,
+  "exitRankPct": 30,
+
+  "atrPeriod": 20,
+  "kStop": 2.5,
+  "riskPctPerTrade": 0.75,
+  "targetPositions": 15,
+  "maxPositions": 20,
+  "positionCapPct": 15,
+
+  "weeklyDdLimit": 8,
+  "monthlyDdLimit": 15,
+  "maxDdLimit": 25,
+
+  "feeBps": 0,
+  "slippageBps": 10,
+
+  "timeoutTradingDays": 252,
   "accountSize": 10000,
-  "riskPctPerTrade": 1.0,
-  "strategyVersion": "gp-2.0.0",
-  "note": "PROVISIONAL tunables — thresholds/empiricalEdge are guesses until backed by gp-outcomes (Phase 8). buyScoreThreshold 53 is a PROVISIONAL mechanical re-center for the gp-2.0.0 empiricalEdge 15→7.5 shift (a flat -7.5/name), NOT outcome tuning and calibrated against ZERO candidates; Phase B must revisit it against real gp-2.0.0 candidates. alertMode MUST start as 'observe'; only a human flips it to 'live'. targetAtrMultiple (k) is a PROVISIONAL ATR-projected target floor that caps winners by design (to be replaced by the trailing-exit engine); INVARIANT: k MUST equal atrStopMultiple*minRiskReward (1.5*2=3.0) — if you change either of those, change k too, or breakouts get re-rejected (k too low) / over-extended (k too high)."
+
+  "strategyVersion": "gp-momentum-1.0.0",
+  "note": "gp-momentum-1.0.0 tunables. The strategy parameters (minPrice, minDollarVol, regimeMa, trendMa, momentumLookback, gapFilterPct, gapFilterWindow, entryRankPct, exitRankPct, atrPeriod, kStop, riskPctPerTrade, targetPositions, maxPositions, positionCapPct, weeklyDdLimit, monthlyDdLimit, maxDdLimit) are the FROZEN, PRE-REGISTERED values from docs/Strategy-v1.md §8 — do NOT fit them to history; any change is a new strategy version re-tested from scratch (Validation-Scorecard). alertMode MUST start 'observe'; only a human flips it to 'live'. OPERATIONAL/COST values are NOT in §8 and are agent-proposed defaults to confirm before --apply: feeBps=0 (commissions ~$0 at modern brokers, §9 'include them'), slippageBps=10 (~0.1%/side, §9), timeoutTradingDays=252 (labeler backstop only — momentum has no time-based exit and 'lets winners run', so this is set long to avoid truncating runners), accountSize=10000 (sizing base, arbitrary in observe mode). This file is NOT auto-applied; writing it to the live gp-config row is a deliberate human step (scripts/seed.mjs --apply), and gp-config is a human-reserved trading row."
 }
