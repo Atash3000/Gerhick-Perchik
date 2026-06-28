@@ -275,3 +275,43 @@ export function riskGovernor(drawdowns, config) {
   }
   return { blockNewBuys: false, haltAllNew: false, reason: null };
 }
+
+// Portfolio construction (§3/§4/§7): choose which eligible names to BUY this
+// review. Pure. Inputs:
+//   ranked      — rankByMomentum() output (the ELIGIBLE set, sorted strongest-first,
+//                 each carrying inEntryZone)
+//   openTickers — Set (or array) of tickers currently held — the open-once guard
+//   governor    — riskGovernor() result { blockNewBuys, reason }
+//   config      — { targetPositions, maxPositions }
+// Returns { buys, slots, blocked, reason }:
+//   - governor blocking new buys → blocked:true, buys:[] (existing holds untouched —
+//     the governor gates NEW risk only; it never sells)
+//   - slots   = max(0, min(targetPositions, maxPositions) − heldCount)
+//   - buys    = the top `slots` ranked names that are inEntryZone AND not held
+//
+// Entry-rank denominator = the ELIGIBLE set (Strategy-v1 §3 "rank every eligible
+// candidate"; locked v1 decision). Option 2 (top X% of the WHOLE universe) is the
+// pre-registered Validation-Scorecard sweep alternative — do NOT switch here
+// without re-running the scorecard.
+export function constructBook(ranked, openTickers, governor, config) {
+  const held = openTickers instanceof Set ? openTickers : new Set(openTickers ?? []);
+
+  if (governor?.blockNewBuys) {
+    return { buys: [], slots: 0, blocked: true, reason: governor.reason ?? "risk governor blocked new buys" };
+  }
+
+  const ceiling = Math.min(config.targetPositions, config.maxPositions);
+  const slots = Math.max(0, ceiling - held.size);
+  if (slots === 0) {
+    return { buys: [], slots: 0, blocked: false, reason: "no open slots" };
+  }
+
+  const buys = [];
+  for (const r of ranked ?? []) {
+    if (buys.length >= slots) break;
+    if (!r.inEntryZone) continue; // only the top entryRankPct of the eligible set
+    if (held.has(r.ticker)) continue; // open-once: never reopen a held name
+    buys.push(r);
+  }
+  return { buys, slots, blocked: false, reason: null };
+}

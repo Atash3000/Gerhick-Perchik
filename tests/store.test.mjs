@@ -732,3 +732,48 @@ test("claimUpdateId returns claimed:false when already claimed", async () => {
   const r = await store.claimUpdateId(555, 1_900_000_000);
   assert.deepEqual(r, { claimed: false });
 });
+
+// --- updateOpenPosition (4b: scanner's weekly trailing-stop maintenance) -----
+
+test("updateOpenPosition refreshes stop/peakClose, guarded so it can't touch a CLOSED row", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, outcomesTable: "T-out" });
+  const r = await store.updateOpenPosition("SIGNAL#MSFT#2026-06-18", 123, { stop: 142.5, peakClose: 151.2 });
+
+  assert.equal(r.updated, true);
+  const inp = client.calls[0];
+  assert.equal(inp.TableName, "T-out");
+  assert.deepEqual(inp.Key, { pk: "SIGNAL#MSFT#2026-06-18", sk: 123 });
+  // The open-once integrity guard, extended to UPDATES: only mutate an OPEN row.
+  assert.equal(inp.ConditionExpression, "#s = :open");
+  assert.equal(inp.ExpressionAttributeValues[":open"], "OPEN");
+  assert.equal(inp.ExpressionAttributeValues[":stop"], 142.5);
+  assert.equal(inp.ExpressionAttributeValues[":peakClose"], 151.2);
+  assert.match(inp.UpdateExpression, /#stop = :stop/);
+  assert.match(inp.UpdateExpression, /#peakClose = :peakClose/);
+});
+
+test("updateOpenPosition on an already-CLOSED row → updated:false, no throw", async () => {
+  const client = fakeClient({ throwOnce: true }); // condition (#s = :open) fails
+  const store = createStore({ client, outcomesTable: "T-out" });
+  const r = await store.updateOpenPosition("SIGNAL#MSFT#2026-06-18", 1, { stop: 100 });
+  assert.equal(r.updated, false);
+  assert.match(r.reason, /not open/);
+});
+
+test("updateOpenPosition rethrows non-conditional errors", async () => {
+  const boom = new Error("kaboom");
+  boom.name = "ProvisionedThroughputExceededException";
+  const store = createStore({ client: fakeClient({ throwError: boom }), outcomesTable: "T-out" });
+  await assert.rejects(() => store.updateOpenPosition("pk", 1, { stop: 100 }), /kaboom/);
+});
+
+test("updateOpenPosition skips non-finite values (no NaN/undefined into the row)", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, outcomesTable: "T-out" });
+  await store.updateOpenPosition("pk", 1, { stop: NaN, peakClose: 151.2 });
+  const inp = client.calls[0];
+  assert.equal(inp.ExpressionAttributeValues[":stop"], undefined); // NaN dropped
+  assert.equal(inp.ExpressionAttributeValues[":peakClose"], 151.2);
+  assert.ok(!/:stop/.test(inp.UpdateExpression));
+});
