@@ -448,6 +448,52 @@ export function range52w(bars) {
   return { low52: round(lo, 2), high52: round(hi, 2) };
 }
 
+// Pure momentum indicator view from raw ascending bars (gp-momentum-1.0.0). No I/O:
+// the scanner fetches bars via getDailyBars and passes them here. Returns the price
+// indicators the momentum snapshot / eligibility / sizing need, plus freshness. The
+// momentum score + cross-sectional rank are computed separately (rankByMomentum)
+// across the whole universe. Returns { fresh:false, reason } on a stale or too-short
+// series — a stale/thin feed is never scored as current.
+export function buildMomentumData(ticker, bars, config, { now = new Date() } = {}) {
+  const dataAsOf = Array.isArray(bars) && bars.length ? bars[bars.length - 1].date : null;
+  const expected = mostRecentTradingDay(now);
+  const fresh = dataAsOf != null && dataAsOf >= expected;
+  // Enough history for the longest lookback used downstream (ma200 context, the
+  // 100-day trend MA, the 90-day momentum + gap windows, the ATR period).
+  const minBars =
+    Math.max(config.trendMa, config.momentumLookback, config.gapFilterWindow + 1, config.atrPeriod, 200) + 1;
+  if (!Array.isArray(bars) || bars.length < minBars || !fresh) {
+    return {
+      ticker,
+      fresh: false,
+      dataAsOf,
+      reason: !fresh
+        ? `stale feed: latest bar ${dataAsOf} < expected ${expected}`
+        : `insufficient history: ${bars.length} bars (< ${minBars})`,
+    };
+  }
+  const closes = bars.map((b) => b.close);
+  const volumes = bars.map((b) => b.volume);
+  const last = bars[bars.length - 1];
+  const avgVolume30 = sma(volumes, 30);
+  return {
+    ticker,
+    bars, // carried forward for eligibility (isEligible) + exit evaluation
+    close: last.close,
+    ma50: sma(closes, 50),
+    ma100: sma(closes, config.trendMa), // the momentum trend MA (100)
+    ma200: sma(closes, 200),
+    atr: atrWilder(bars, config.atrPeriod), // ATR over config.atrPeriod (20), not 14
+    avgVolume30: avgVolume30 == null ? null : Math.round(avgVolume30),
+    volume: Math.round(last.volume),
+    return63d: returnPct(bars, 63),
+    return126d: returnPct(bars, 126),
+    return252d: returnPct(bars, 252),
+    dataAsOf,
+    fresh: true,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Public API.
 // ---------------------------------------------------------------------------
