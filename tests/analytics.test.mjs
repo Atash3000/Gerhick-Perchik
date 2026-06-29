@@ -2,91 +2,85 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   performance,
-  byScoreBucket,
-  componentEdge,
+  byRankBucket,
   analyze,
   formatAnalysis,
 } from "../lambdas/control/analytics.mjs";
 
-// Synthetic CLOSED outcomes — proves the harness is correct before any real data.
-function outcome(score, outcomeType, profitPct, breakdown) {
-  return { status: "CLOSED", strategyVersion: "gp-1.0.0", score, outcome: outcomeType, profitPct, breakdown };
+// Synthetic CLOSED momentum outcomes — rankPct (no score), outcome STOP|EXIT|TIMEOUT
+// (no TARGET), no breakdown.
+function outcome(rankPct, outcomeType, profitPct) {
+  return { status: "CLOSED", strategyVersion: "gp-momentum-1.0.0", rankPct, outcome: outcomeType, profitPct };
 }
 
 const SET = [
-  outcome(82, "TARGET", 10, { trend: 20, setup: 16, momentum: 15 }),
-  outcome(78, "TARGET", 8, { trend: 20, setup: 12, momentum: 9 }),
-  outcome(71, "STOP", -3, { trend: 14, setup: 8, momentum: 4 }),
-  outcome(64, "STOP", -3, { trend: 13, setup: 8, momentum: 4 }),
-  outcome(60, "TIMEOUT", 1, { trend: 13, setup: 10, momentum: 9 }),
+  outcome(95, "EXIT", 10), // win
+  outcome(85, "EXIT", 8), // win
+  outcome(70, "STOP", -3), // loss
+  outcome(65, "STOP", -3), // loss
+  outcome(50, "TIMEOUT", 1), // win
 ];
 
-test("performance computes win-rate, profit factor, avg win/loss, expectancy", () => {
+test("performance: momentum win-rate, PF, avg win/loss, expectancy; counts STOP/EXIT/TIMEOUT", () => {
   const p = performance(SET);
   assert.equal(p.n, 5);
-  assert.equal(p.winRate, 60); // 3 profits >0 (10, 8, 1) of 5
-  assert.equal(p.avgWinPct, 6.33); // (10+8+1)/3
-  assert.equal(p.avgLossPct, -3); // (-3 + -3)/2
-  assert.equal(p.profitFactor, 3.17); // (10+8+1) / (3+3) = 19/6
-  assert.equal(p.expectancyPct, 2.6); // (10+8-3-3+1)/5
-  assert.equal(p.targets, 2);
+  assert.equal(p.winRate, 60); // 3 after-cost positive (10, 8, 1) of 5
+  assert.equal(p.avgWinPct, 6.33);
+  assert.equal(p.avgLossPct, -3);
+  assert.equal(p.profitFactor, 3.17); // (10+8+1) / (3+3)
+  assert.equal(p.expectancyPct, 2.6);
   assert.equal(p.stops, 2);
+  assert.equal(p.exits, 2);
   assert.equal(p.timeouts, 1);
 });
 
 test("performance handles empty + no-loss sets", () => {
   assert.deepEqual(performance([]), { n: 0 });
-  const allWin = performance([outcome(80, "TARGET", 5, {})]);
+  const allWin = performance([outcome(80, "EXIT", 5)]);
   assert.equal(allWin.profitFactor, null); // undefined ratio, no losses
 });
 
 test("performance uses the valid-profit subset as denominator (missing profitPct doesn't bias)", () => {
-  // 3 wins, 2 losses (valid) + 1 row missing profitPct. Win-rate must divide by the
-  // 5 valid rows (60%), NOT all 6 (which would wrongly read 50%).
-  const withMissing = [...SET, outcome(70, "TIMEOUT", undefined, {})];
+  const withMissing = [...SET, outcome(40, "TIMEOUT", undefined)];
   const p = performance(withMissing);
-  assert.equal(p.n, 6); // total closed rows still reported
-  assert.equal(p.nValid, 5); // rows with a usable profitPct
+  assert.equal(p.n, 6);
+  assert.equal(p.nValid, 5);
   assert.equal(p.invalidProfitCount, 1);
   assert.equal(p.winRate, 60); // 3 / 5 valid, not 3 / 6
-  assert.equal(p.expectancyPct, 2.6); // unchanged — averaged over valid only
+  assert.equal(p.expectancyPct, 2.6);
 });
 
-test("byScoreBucket groups by 10-pt band", () => {
-  const b = byScoreBucket(SET);
-  assert.equal(b["80s"].n, 1);
-  assert.equal(b["70s"].n, 2);
-  assert.equal(b["60s"].n, 2);
+test("byRankBucket groups by rank percentile band (does the strongest-ranked win more?)", () => {
+  const b = byRankBucket(SET);
+  assert.equal(b["80-100%"].n, 2); // rankPct 95, 85
+  assert.equal(b["60-80%"].n, 2); // 70, 65
+  assert.equal(b["40-60%"].n, 1); // 50
 });
 
-test("componentEdge ranks how well each component separates winners", () => {
-  const e = componentEdge(SET);
-  // trend cleanly separates: high-half (>=median) are the winners → positive edge
-  assert.ok(e.trend);
-  assert.ok(e.trend.winRateEdge >= 0);
-  assert.equal(typeof e.trend.expectancyEdge, "number");
-});
-
-test("componentEdge returns {} below the minimum sample", () => {
-  assert.deepEqual(componentEdge(SET.slice(0, 2)), {});
-});
-
-test("analyze filters by strategyVersion and bundles everything", () => {
-  const mixed = [...SET, outcome(90, "TARGET", 12, { trend: 20 })];
+test("analyze filters by strategyVersion and bundles overall + byRankBucket (no componentEdge)", () => {
+  const mixed = [...SET, outcome(90, "EXIT", 12)];
   mixed[mixed.length - 1].strategyVersion = "gp-OLD";
-  const a = analyze(mixed, { strategyVersion: "gp-1.0.0" });
+  const a = analyze(mixed, { strategyVersion: "gp-momentum-1.0.0" });
   assert.equal(a.overall.n, 5); // gp-OLD excluded
-  assert.ok(a.byScoreBucket["80s"]);
-  assert.ok(a.componentEdge.trend);
+  assert.ok(a.byRankBucket["80-100%"]);
+  assert.equal(a.componentEdge, undefined); // momentum has no score breakdown
 });
 
-test("formatAnalysis renders, and gives the honest empty message", () => {
-  const text = formatAnalysis(analyze(SET, { strategyVersion: "gp-1.0.0" }), "30d");
-  assert.match(text, /Analysis \(30d\) — gp-1\.0\.0/);
+test("formatAnalysis renders momentum, and the honest empty message", () => {
+  const text = formatAnalysis(analyze(SET, { strategyVersion: "gp-momentum-1.0.0" }), "30d");
+  assert.match(text, /Analysis \(30d\) — gp-momentum-1\.0\.0/);
   assert.match(text, /PF 3\.17/);
-  assert.match(text, /Component predictors/);
+  assert.match(text, /By rank %:/);
+  assert.doesNotMatch(text, /Component predictors/); // removed with the score breakdown
 
-  const empty = formatAnalysis(analyze([], { strategyVersion: "gp-1.0.0" }));
+  const empty = formatAnalysis(analyze([], { strategyVersion: "gp-momentum-1.0.0" }));
   assert.match(empty, /No closed outcomes yet/);
   assert.match(empty, /forbidden by design/);
+});
+
+test("formatAnalysis: closed rows but NO usable profitPct → honest message, never undefined%", () => {
+  const rows = [{ status: "CLOSED", strategyVersion: "gp-momentum-1.0.0", rankPct: 90, outcome: "STOP", profitPct: undefined }];
+  const text = formatAnalysis(analyze(rows, { strategyVersion: "gp-momentum-1.0.0" }));
+  assert.match(text, /none has a usable profitPct/);
+  assert.doesNotMatch(text, /undefined/);
 });

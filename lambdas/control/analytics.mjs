@@ -1,12 +1,12 @@
-// analytics.mjs — Phase 8 analysis harness (pure). Turns accumulated CLOSED
-// gp-outcomes into the numbers needed to TUNE thresholds/weights:
-//   - profit factor, avg win / avg loss, expectancy
-//   - performance by score bucket
-//   - component-predictor edge: for each scoring component, does a HIGH value
-//     actually separate winners from losers? (the input to v2 re-weighting)
+// analytics.mjs — momentum analysis harness (pure). Turns accumulated CLOSED
+// gp-outcomes into the numbers a human reads before any tuning:
+//   - profit factor, avg win / avg loss, expectancy (after cost)
+//   - performance by RANK PERCENTILE band — the v1 predictor question: do the
+//     strongest-ranked names actually win more? (momentum has no score breakdown,
+//     so this rank split IS the predictor analysis.)
 //
-// This computes; it does NOT tune. A human reviews the output and decides weight
-// changes (a STRATEGY_VERSION bump). "Math decides. AI only explains."
+// This computes; it does NOT tune. A human reviews the output and decides any
+// change (a STRATEGY_VERSION bump). "Math decides. AI only explains."
 //
 // IMPORTANT: only compare within one strategyVersion — win-rates across versions
 // are not comparable.
@@ -49,17 +49,19 @@ export function performance(rows) {
     expectancyPct: round(mean(profits), 2), // avg P&L per signal, after cost
     // profitFactor: gross wins / gross losses. null if no losses yet (undefined ratio).
     profitFactor: grossLoss > 0 ? round(grossWin / grossLoss, 2) : null,
-    targets: rows.filter((o) => o.outcome === "TARGET").length,
     stops: rows.filter((o) => o.outcome === "STOP").length,
+    exits: rows.filter((o) => o.outcome === "EXIT").length, // scanner rank/trend close
     timeouts: rows.filter((o) => o.outcome === "TIMEOUT").length,
   };
 }
 
-// Performance grouped by 10-point score bucket.
-export function byScoreBucket(rows) {
+// Performance grouped by rank PERCENTILE band (gp-2.0.0's `score` is gone). This is
+// momentum's predictor question: do the strongest-ranked names actually win more?
+export function byRankBucket(rows) {
   const buckets = {};
   for (const o of rows) {
-    const k = typeof o.score === "number" ? `${Math.floor(o.score / 10) * 10}s` : "n/a";
+    const lo = typeof o.rankPct === "number" && Number.isFinite(o.rankPct) ? Math.min(80, Math.floor(o.rankPct / 20) * 20) : null;
+    const k = lo == null ? "n/a" : `${lo}-${lo + 20}%`;
     (buckets[k] ??= []).push(o);
   }
   const out = {};
@@ -67,51 +69,15 @@ export function byScoreBucket(rows) {
   return out;
 }
 
-// Component-predictor edge: for each key in the score `breakdown`, split closed
-// outcomes at the component's MEDIAN and compare win-rate / expectancy of the
-// high half vs the low half. A large positive `winRateEdge` means that component
-// genuinely separates winners — i.e. it deserves weight in v2. A near-zero or
-// negative edge means it doesn't (yet).
-export function componentEdge(rows) {
-  const withBreakdown = rows.filter((o) => o.breakdown && typeof o.breakdown === "object");
-  if (withBreakdown.length < 4) return {}; // too few to split meaningfully
-  const keys = Object.keys(withBreakdown[0].breakdown);
-  const result = {};
-  for (const key of keys) {
-    const vals = withBreakdown
-      .map((o) => o.breakdown[key])
-      .filter((v) => typeof v === "number")
-      .sort((a, b) => a - b);
-    if (vals.length < 4) continue;
-    const median = vals[Math.floor(vals.length / 2)];
-    const high = withBreakdown.filter((o) => o.breakdown[key] >= median);
-    const low = withBreakdown.filter((o) => o.breakdown[key] < median);
-    if (high.length === 0 || low.length === 0) continue; // no spread in this component
-    const hi = performance(high);
-    const lo = performance(low);
-    result[key] = {
-      median,
-      highWinRate: hi.winRate,
-      lowWinRate: lo.winRate,
-      winRateEdge: round((hi.winRate ?? 0) - (lo.winRate ?? 0), 1),
-      highExpectancyPct: hi.expectancyPct,
-      lowExpectancyPct: lo.expectancyPct,
-      expectancyEdge: round((hi.expectancyPct ?? 0) - (lo.expectancyPct ?? 0), 2),
-      nHigh: hi.n,
-      nLow: lo.n,
-    };
-  }
-  return result;
-}
-
-// Full Phase-8 analysis bundle.
+// Full analysis bundle. NO component-predictor edge: momentum has no score
+// `breakdown`, so the rank-bucket split IS the v1 predictor question. (The one
+// pre-registered v2 experiment — a fundamental quality factor — is separate.)
 export function analyze(outcomes, opts = {}) {
   const rows = closedRows(outcomes, opts);
   return {
     strategyVersion: opts.strategyVersion ?? null,
     overall: performance(rows),
-    byScoreBucket: byScoreBucket(rows),
-    componentEdge: componentEdge(rows),
+    byRankBucket: byRankBucket(rows),
   };
 }
 
@@ -120,9 +86,14 @@ export function formatAnalysis(a, label) {
   const lines = [`🔬 Analysis${label ? ` (${label})` : ""} — ${a.strategyVersion ?? "all"}`];
   if (!o.n) {
     lines.push(
-      "No closed outcomes yet — Phase 8 needs accumulated data before tuning.",
-      "(Tuning thresholds/weights on no data is forbidden by design.)"
+      "No closed outcomes yet — needs accumulated data before any tuning.",
+      "(Tuning on no data is forbidden by design.)"
     );
+    return lines.join("\n");
+  }
+  if (!o.nValid) {
+    // Closed rows exist but none has a usable profitPct — don't render undefined%.
+    lines.push(`${o.n} closed, but none has a usable profitPct yet — nothing to summarize.`);
     return lines.join("\n");
   }
   lines.push(
@@ -130,27 +101,15 @@ export function formatAnalysis(a, label) {
       `exp ${o.expectancyPct}%/trade`
   );
   lines.push(`avg win ${o.avgWinPct}% · avg loss ${o.avgLossPct}% · ` +
-    `(${o.targets} target / ${o.stops} stop / ${o.timeouts} timeout)`);
+    `(${o.stops} stop / ${o.exits} exit / ${o.timeouts} timeout)`);
 
-  const bk = Object.keys(a.byScoreBucket).sort();
+  const bk = Object.keys(a.byRankBucket).sort();
   if (bk.length) {
-    lines.push("By score bucket:");
+    lines.push("By rank %:");
     for (const k of bk) {
-      const b = a.byScoreBucket[k];
+      const b = a.byRankBucket[k];
       lines.push(`  ${k}: ${b.n} · win ${b.winRate}% · exp ${b.expectancyPct}%`);
     }
-  }
-
-  const ce = Object.entries(a.componentEdge);
-  if (ce.length) {
-    // Rank components by win-rate edge — the strongest predictors first.
-    ce.sort((x, y) => (y[1].winRateEdge ?? 0) - (x[1].winRateEdge ?? 0));
-    lines.push("Component predictors (high vs low half):");
-    for (const [key, e] of ce) {
-      lines.push(`  ${key}: win-rate edge ${e.winRateEdge >= 0 ? "+" : ""}${e.winRateEdge}pp · exp edge ${e.expectancyEdge >= 0 ? "+" : ""}${e.expectancyEdge}%`);
-    }
-  } else {
-    lines.push("Component predictors: not enough data to split yet.");
   }
   return lines.join("\n");
 }
