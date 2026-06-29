@@ -855,13 +855,29 @@ test("openMomentumOutcome defaults signalClose/plannedEntry to entry when not su
   const client = fakeClient();
   const store = createStore({ client, outcomesTable: "T-out" });
   await store.openMomentumOutcome(
-    { ticker: "MSFT", dataAsOf: "2026-06-18", entry: 42, stop: 40 },
+    { ticker: "MSFT", dataAsOf: "2026-06-18", entry: 42, stop: 40, shares: 10 },
     {}
   );
   const { Item } = client.calls[0];
   assert.equal(Item.signalClose, 42);
   assert.equal(Item.plannedEntry, 42);
   assert.equal(Item.scanId, null);
+});
+
+test("openMomentumOutcome fails loud on a non-finite position-defining field (no poisoned row)", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, outcomesTable: "T-out" });
+  // Missing shares → malformed BUY; must throw, never write a corrupt tracked trade.
+  await assert.rejects(
+    () => store.openMomentumOutcome({ ticker: "MSFT", dataAsOf: "2026-06-18", entry: 42, stop: 40 }, {}),
+    /non-finite required field\(s\): shares/
+  );
+  // Non-finite entry/stop likewise.
+  await assert.rejects(
+    () => store.openMomentumOutcome({ ticker: "MSFT", dataAsOf: "2026-06-18", entry: NaN, stop: 40, shares: 10 }, {}),
+    /non-finite required field\(s\): entry/
+  );
+  assert.equal(client.calls.length, 0); // nothing written
 });
 
 test("normalizeMomentumExitReason maps every v2 reason (incl manual, data_error)", () => {

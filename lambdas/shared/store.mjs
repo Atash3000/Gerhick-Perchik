@@ -379,6 +379,16 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
     async openMomentumOutcome(result, { sector = null, scanId = null } = {}) {
       const entryDate = result.dataAsOf;
       if (!entryDate) throw new Error(`cannot open outcome ${result.ticker}: no entry date`);
+      // Fail loud on the position-defining fields — a BUY outcome with a non-finite
+      // entry/stop/shares is malformed and would poison the labeler's first-touch
+      // math. Better to error than silently write a corrupt tracked trade. (entryAtr/
+      // initialRiskPct stay nullable — audit-only; the labeler uses entry/stop and
+      // the scanner's exits use current ATR, not the stored entryAtr.)
+      const required = { entry: result.entry, stop: result.stop, shares: result.shares };
+      const bad = Object.entries(required).filter(([, v]) => !Number.isFinite(v)).map(([k]) => k);
+      if (bad.length) {
+        throw new Error(`cannot open momentum outcome ${result.ticker}: non-finite required field(s): ${bad.join(", ")}`);
+      }
       const entry = nullableNumber(result.entry);
       const stop = nullableNumber(result.stop);
       // Entry-price separation (schema v2). OBSERVE: entry = plannedEntry =
