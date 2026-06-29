@@ -45,7 +45,12 @@ export function labelSignal(signal, bars, config) {
 
   const entryAdj = entry * scaleFactor;
   const stopAdj = stop * scaleFactor;
-  const targetAdj = target * scaleFactor;
+  // A non-finite target means "no fixed target" (the momentum strategy: exits are
+  // stop/trail/rank/trend, never a profit cap). Make that explicit so target checks
+  // are skipped entirely — robust to undefined/null/NaN, not reliant on NaN-compare
+  // accident (a `null` target would otherwise scale to 0 and fire a phantom TARGET).
+  const hasTarget = Number.isFinite(target);
+  const targetAdj = hasTarget ? target * scaleFactor : null;
 
   const audit = {
     scaleFactor: round(scaleFactor, 6),
@@ -77,7 +82,7 @@ export function labelSignal(signal, bars, config) {
     // intraday move could reach the stop — so the target is hit first even if the
     // same bar later trades down through the stop. Checked before the stop rule.
     // Exit at target (we still don't credit the favorable gap above it).
-    if (bar.open >= targetAdj) {
+    if (hasTarget && bar.open >= targetAdj) {
       outcome = OUTCOME.TARGET;
       hitTargetFirst = true;
       exitPrice = targetAdj;
@@ -94,7 +99,7 @@ export function labelSignal(signal, bars, config) {
       exitDate = bar.date;
       break;
     }
-    if (bar.high >= targetAdj) {
+    if (hasTarget && bar.high >= targetAdj) {
       outcome = OUTCOME.TARGET;
       hitTargetFirst = true;
       exitPrice = targetAdj; // do not credit a gap above target

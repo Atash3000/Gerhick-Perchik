@@ -363,6 +363,10 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
         strategyVersion: result.strategyVersion ?? STRATEGY_VERSION,
         entry: nullableNumber(result.entry),
         stop: nullableNumber(result.stop),
+        // peakClose seeds the chandelier trail. At entry the highest close since
+        // entry IS the entry, so default to entry — the scanner (4b) reads this back
+        // into evaluateExits/updateTrailingStop, which require a finite peakClose.
+        peakClose: nullableNumber(result.peakClose ?? result.entry, 2),
         momentum: nullableNumber(result.momentum),
         slope: nullableNumber(result.slope),
         r2: nullableNumber(result.r2),
@@ -436,6 +440,49 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
       } catch (err) {
         if (err?.name === "ConditionalCheckFailedException") {
           return { closed: false, reason: "not open" };
+        }
+        throw err;
+      }
+    },
+
+    // Refresh the trailing stop + peak on an OPEN outcome — the scanner's weekly
+    // exit maintenance (the split exit-ownership model: the scanner keeps the
+    // trailing stop current; the unchanged labeler first-touches it daily). Guarded
+    // by status = OPEN, so it can NEVER mutate a CLOSED/labeled outcome (the
+    // open-once integrity guard, extended to updates). Only finite values are
+    // written (no NaN/undefined into the row). Returns { updated } / { updated:false,
+    // reason:"not open" } when the row isn't open.
+    //
+    // NOTE: this makes the trail WEEKLY-granular (frozen between runs) — a
+    // deliberate, conservative under-trail. Step 5's backtester MUST model exits the
+    // same way, or live observe and the backtest would measure differently.
+    async updateOpenPosition(pk, sk, fields = {}) {
+      const sets = ["reviewedAt = :reviewedAt"];
+      const names = { "#s": "status" };
+      const values = { ":reviewedAt": new Date().toISOString(), ":open": "OPEN" };
+      for (const k of ["stop", "peakClose"]) {
+        const v = fields[k];
+        if (typeof v === "number" && Number.isFinite(v)) {
+          sets.push(`#${k} = :${k}`);
+          names[`#${k}`] = k;
+          values[`:${k}`] = v;
+        }
+      }
+      try {
+        await doc.send(
+          new UpdateCommand({
+            TableName: outTable,
+            Key: { pk, sk },
+            UpdateExpression: "SET " + sets.join(", "),
+            ExpressionAttributeNames: names,
+            ExpressionAttributeValues: values,
+            ConditionExpression: "#s = :open",
+          })
+        );
+        return { updated: true };
+      } catch (err) {
+        if (err?.name === "ConditionalCheckFailedException") {
+          return { updated: false, reason: "not open" };
         }
         throw err;
       }
