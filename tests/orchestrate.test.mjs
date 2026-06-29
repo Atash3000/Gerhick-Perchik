@@ -230,3 +230,23 @@ test("#3 counters: executePlan counts only truthy updated/closed returns (honest
   assert.equal(r.refreshed, 1); // only the truthy update counted
   assert.equal(r.exitsClosed, 1);
 });
+
+test("alert failure is BEST-EFFORT: a Telegram throw doesn't fail the scan or block later buys", async () => {
+  const plan = {
+    snapshots: [],
+    refreshes: [],
+    exits: [],
+    buys: [{ result: { ticker: "A" }, sector: "T" }, { result: { ticker: "B" }, sector: "T" }],
+  };
+  const store = fakeStore();
+  const r = await executePlan(plan, {
+    store,
+    sendAlert: async () => { throw new Error("telegram 503"); }, // every alert fails
+    snapshotsOnly: false, scanId: "s", params: PARAMS,
+  });
+  // BOTH outcomes still opened (alert failure didn't abort the loop or throw).
+  assert.equal(store.calls.open.length, 2);
+  assert.equal(r.outcomesOpened, 2);
+  assert.equal(r.alertsSent, 0);
+  assert.equal(r.alertErrors, 2); // counted, not fatal
+});
