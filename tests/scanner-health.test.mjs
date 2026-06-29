@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { assessScanHealth, unionTickers, gatherUniverse } from "../lambdas/scanner/handler.mjs";
+import { assessScanHealth, unionTickers, gatherUniverse, momentumFamilyOpen } from "../lambdas/scanner/handler.mjs";
 import { planScan } from "../lambdas/scanner/orchestrate.mjs";
 
 // --- assessScanHealth (coverage / silent-failure alarm) --------------------
@@ -101,4 +101,14 @@ test("#4 end-to-end: a DISABLED, still-held position is gathered AND managed (ne
 
   const managed = new Set([...plan.exits.map((e) => e.ticker), ...plan.refreshes.map((r) => r.ticker)]);
   assert.ok(managed.has("OLD"), "a disabled-but-held position must still be managed, never stranded");
+});
+
+test("momentumFamilyOpen: keeps gp-momentum-* positions, excludes legacy/non-momentum", () => {
+  const got = momentumFamilyOpen([
+    { ticker: "A", strategyVersion: "gp-momentum-1.0.0" },
+    { ticker: "B", strategyVersion: "gp-momentum-1.1.0" }, // a future bump — still managed (no stranding)
+    { ticker: "C", strategyVersion: "gp-2.0.0" }, // legacy — excluded (no momentum mis-close)
+    { ticker: "D" }, // missing version → excluded
+  ]);
+  assert.deepEqual(got.map((o) => o.ticker), ["A", "B"]);
 });

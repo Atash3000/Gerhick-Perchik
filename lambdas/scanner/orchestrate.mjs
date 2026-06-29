@@ -179,7 +179,7 @@ export async function executePlan(plan, { store, sendAlert, snapshotsOnly = fals
   if (!scanId) throw new Error("executePlan: scanId is required (self-describing rows)");
   if (!params) throw new Error("executePlan: params is required (self-describing rows)");
 
-  let snapshotsWritten = 0, outcomesOpened = 0, exitsClosed = 0, refreshed = 0, alertsSent = 0;
+  let snapshotsWritten = 0, outcomesOpened = 0, exitsClosed = 0, refreshed = 0, alertsSent = 0, alertErrors = 0;
 
   for (const s of plan.snapshots) {
     await store.writeMomentumSnapshot(s.result, {
@@ -204,9 +204,19 @@ export async function executePlan(plan, { store, sendAlert, snapshotsOnly = fals
     const opened = await store.openMomentumOutcome(b.result, { sector: b.sector, scanId });
     if (opened?.opened) {
       outcomesOpened += 1;
-      if (sendAlert) { await sendAlert(b); alertsSent += 1; }
+      // Alerts are BEST-EFFORT: a Telegram failure must NOT fail the scan, abort the
+      // remaining buys, or roll back outcomes already persisted. Log + count, continue.
+      if (sendAlert) {
+        try {
+          await sendAlert(b);
+          alertsSent += 1;
+        } catch (err) {
+          alertErrors += 1;
+          console.error(`gp_scan_failed: alert ${b.result?.ticker}: ${err.message}`);
+        }
+      }
     }
   }
 
-  return { snapshotsWritten, outcomesOpened, exitsClosed, refreshed, alertsSent, snapshotsOnly: false };
+  return { snapshotsWritten, outcomesOpened, exitsClosed, refreshed, alertsSent, alertErrors, snapshotsOnly: false };
 }

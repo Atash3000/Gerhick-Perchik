@@ -40,6 +40,16 @@ export function unionTickers(enabledWatchlist, openOutcomes) {
   return [...map.values()];
 }
 
+// The held book the momentum scanner manages: every MOMENTUM-FAMILY open outcome
+// (gp-momentum-*), so a future momentum version bump never strands a position from
+// its trailing-stop refresh / exits. Legacy NON-momentum outcomes (e.g. gp-2.0.0)
+// are EXCLUDED — they lack peakClose and would be wrongly closed as `data_error` by
+// the momentum exit logic; the (unchanged) labeler handles their fixed stop/target.
+// Cross-version wind-down policy is tracked in issue #84. Pure.
+export function momentumFamilyOpen(outcomes) {
+  return (outcomes ?? []).filter((o) => String(o.strategyVersion ?? "").startsWith("gp-momentum"));
+}
+
 // Fetch bars + build the momentum view + eligibility for each ticker. `fetchBars`
 // is injectable for tests. A per-ticker fetch error becomes a NO_DATA row (kept in
 // the universe so the snapshot table preserves the full day), never a thrown scan.
@@ -172,16 +182,13 @@ export async function handler(event) {
 
   const store = createStore();
   const watchlist = await loadEnabledWatchlist(process.env.WATCHLIST_TABLE);
-  // Held book = ALL open positions, NOT version-filtered. A held position must
-  // ALWAYS be managed (its trailing stop refreshed, its exits checked) — a held
-  // position is a held position. Filtering by STRATEGY_VERSION here would orphan a
-  // position from management across a future version bump: its trail would freeze
-  // and it'd exit at a stale stop. strategyVersion governs STAMPING new rows and
-  // outcome ANALYSIS (never pool win-rates across versions), not which positions
-  // get managed. New entries are still stamped the current version downstream.
-  // (Cross-version coexistence wind-down is tracked separately; today all open
-  // positions are momentum, so this is exact.)
-  const openOutcomes = await store.listOpenOutcomes();
+  // Held book = every MOMENTUM-FAMILY open position (NOT filtered to the EXACT
+  // current version — that would strand prior-momentum positions across a version
+  // bump, freezing their trail). strategyVersion governs row STAMPING + outcome
+  // ANALYSIS, not management. Legacy non-momentum outcomes are excluded (they'd be
+  // mis-closed as data_error) and left to the labeler's fixed exits. Today all open
+  // positions are momentum, so this is exact. See #84.
+  const openOutcomes = momentumFamilyOpen(await store.listOpenOutcomes());
 
   const tickers = unionTickers(watchlist, openOutcomes);
   const gathered = await gatherUniverse(tickers, config, { fetchBars: (t) => getDailyBars(t, { now }), now });
