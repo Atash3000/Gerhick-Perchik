@@ -297,21 +297,16 @@ export function constructBook(ranked, openTickers, governor, config) {
   const held = openTickers instanceof Set ? openTickers : new Set(openTickers ?? []);
 
   if (governor?.blockNewBuys) {
-    return { buys: [], slots: 0, blocked: true, reason: governor.reason ?? "risk governor blocked new buys" };
+    return { candidates: [], slots: 0, blocked: true, reason: governor.reason ?? "risk governor blocked new buys" };
   }
 
   const ceiling = Math.min(config.targetPositions, config.maxPositions);
   const slots = Math.max(0, ceiling - held.size);
-  if (slots === 0) {
-    return { buys: [], slots: 0, blocked: false, reason: "no open slots" };
-  }
 
-  const buys = [];
-  for (const r of ranked ?? []) {
-    if (buys.length >= slots) break;
-    if (!r.inEntryZone) continue; // only the top entryRankPct of the eligible set
-    if (held.has(r.ticker)) continue; // open-once: never reopen a held name
-    buys.push(r);
-  }
-  return { buys, slots, blocked: false, reason: null };
+  // The ORDERED POOL of buyable candidates: the top entryRankPct of the eligible
+  // set, not already held (open-once). NOT truncated to `slots` — the caller fills
+  // `slots` of these and SKIPS any that can't be sized, so the next-ranked candidate
+  // backfills the slot (an unsizable name never strands its slot). #85.
+  const candidates = (ranked ?? []).filter((r) => r.inEntryZone && !held.has(r.ticker));
+  return { candidates, slots, blocked: false, reason: slots === 0 ? "no open slots" : null };
 }
