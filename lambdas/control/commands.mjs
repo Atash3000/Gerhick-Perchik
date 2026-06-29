@@ -9,7 +9,7 @@ export const HELP = [
   "/enable <TICKER> — add a ticker to the active scan",
   "/disable <TICKER> — remove it",
   "/stats [30d] — outcome summary for the current strategy version",
-  "/analyze [30d] — Phase 8 deep-dive: profit factor + component predictors",
+  "/analyze [30d] — deep-dive: profit factor + performance by rank %",
   "/bought <TICKER> <SHARES> <PRICE> — confirm a manual buy (links latest GP signal)",
   "/sell <TICKER> <SHARES> <PRICE> — sell part or all of an open position",
   "/skip <TICKER> [reason] — record that you skipped a signal",
