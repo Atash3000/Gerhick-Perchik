@@ -151,6 +151,23 @@ export function momentumSnapshotMetrics(md) {
   };
 }
 
+// The tunables stamped onto each snapshot's `params` block (schema v2 §A2) — the
+// frozen Strategy-v1 §8 set + §1 liquidity + §3 gap + §4 portfolio + §6 governor +
+// §9 costs. Built once per scan from the gp-config ACTIVE row and stored identically
+// on every row, so each row is self-describing about which numbers produced it.
+export const SNAPSHOT_PARAM_KEYS = [
+  "regimeMa", "trendMa", "momentumLookback", "entryRankPct", "exitRankPct",
+  "atrPeriod", "kStop", "riskPctPerTrade", "minPrice", "minDollarVol",
+  "gapFilterPct", "gapFilterWindow", "targetPositions", "maxPositions", "positionCapPct",
+  "weeklyDdLimit", "monthlyDdLimit", "maxDdLimit", "feeBps", "slippageBps",
+];
+
+export function momentumParams(config) {
+  const out = {};
+  for (const k of SNAPSHOT_PARAM_KEYS) out[k] = nullableNumber(config?.[k]);
+  return out;
+}
+
 function nullableNumber(v, dp = null) {
   if (typeof v !== "number" || !Number.isFinite(v)) return null;
   if (dp == null) return v;
@@ -259,7 +276,7 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
     // Momentum-v1 snapshot shape. Same table/keys as legacy snapshots, but the item
     // body follows docs/Snapshot-Schema-momentum.md and drops gp-2.0.0 score/target
     // fields. Step 4b will switch the scanner to this writer.
-    async writeMomentumSnapshot(result, { asOf, sector = null, marketData = null, spy = null } = {}) {
+    async writeMomentumSnapshot(result, { asOf, sector = null, marketData = null, spy = null, scanId = null, params = null } = {}) {
       const day = result.dataAsOf ?? asOf;
       if (!day) throw new Error(`cannot snapshot ${result.ticker}: no as-of date`);
       const item = {
@@ -268,7 +285,12 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
         ticker: result.ticker,
         dataAsOf: result.dataAsOf ?? day,
         strategyVersion: result.strategyVersion ?? STRATEGY_VERSION,
+        scanId: scanId ?? null, // groups every row from one scan run (schema v2 §A)
         scannedAt: new Date().toISOString(),
+        // The actual tunables this scan ran with (schema v2 §A2) — strategyVersion
+        // says which strategy; params proves which numbers, so a later config edit
+        // can't silently make old rows untrustworthy. Same across the run's rows.
+        params: params ?? null,
 
         decision: result.decision,
         reason: result.reason ?? null,

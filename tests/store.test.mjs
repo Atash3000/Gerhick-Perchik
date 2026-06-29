@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createStore, epochDay, epochMs } from "../lambdas/shared/store.mjs";
+import { createStore, epochDay, epochMs, momentumParams, SNAPSHOT_PARAM_KEYS } from "../lambdas/shared/store.mjs";
 
 // A fake DynamoDB document client. Records each command's `.input`; can be told
 // to throw (once, or always) to exercise the conditional-put path.
@@ -780,4 +780,48 @@ test("updateOpenPosition skips non-finite values (no NaN/undefined into the row)
   assert.equal(inp.ExpressionAttributeValues[":stop"], undefined); // NaN dropped
   assert.equal(inp.ExpressionAttributeValues[":peakClose"], 151.2);
   assert.ok(!/:stop/.test(inp.UpdateExpression));
+});
+
+// --- schema v2: scanId + params snapshot ------------------------------------
+
+test("momentumParams snapshots exactly the schema v2 §A2 tunables (and excludes the rest)", () => {
+  const config = {
+    regimeMa: 200, trendMa: 100, momentumLookback: 90, entryRankPct: 20, exitRankPct: 30,
+    atrPeriod: 20, kStop: 2.5, riskPctPerTrade: 0.75, minPrice: 5, minDollarVol: 10_000_000,
+    gapFilterPct: 15, gapFilterWindow: 90, targetPositions: 15, maxPositions: 20, positionCapPct: 15,
+    weeklyDdLimit: 8, monthlyDdLimit: 15, maxDdLimit: 25, feeBps: 0, slippageBps: 10,
+    // not part of the params block:
+    alertMode: "observe", accountSize: 10000, timeoutTradingDays: 252,
+  };
+  const p = momentumParams(config);
+  assert.deepEqual(Object.keys(p).sort(), [...SNAPSHOT_PARAM_KEYS].sort());
+  assert.equal(p.kStop, 2.5);
+  assert.equal(p.regimeMa, 200);
+  assert.equal("alertMode" in p, false);
+  assert.equal("accountSize" in p, false);
+  assert.equal("timeoutTradingDays" in p, false);
+});
+
+test("writeMomentumSnapshot stamps scanId + params (self-describing rows, schema v2)", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, snapshotsTable: "T-snap" });
+  const params = momentumParams({ kStop: 2.5, regimeMa: 200, trendMa: 100 });
+
+  await store.writeMomentumSnapshot(momentumResult, {
+    asOf: "2026-06-18", scanId: "scan-2026-06-18-abc", params,
+  });
+
+  const { Item } = client.calls[0];
+  assert.equal(Item.scanId, "scan-2026-06-18-abc");
+  assert.deepEqual(Item.params, params); // the exact tunables this scan ran with
+  assertNoUndefined(Item);
+});
+
+test("writeMomentumSnapshot scanId/params default to null when not supplied", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, snapshotsTable: "T-snap" });
+  await store.writeMomentumSnapshot(momentumResult, { asOf: "2026-06-18" });
+  const { Item } = client.calls[0];
+  assert.equal(Item.scanId, null);
+  assert.equal(Item.params, null);
 });
