@@ -72,8 +72,14 @@ un-trustworthy. Stored once per scan (identical across the run's rows).
 
 | field | type | meaning |
 |---|---|---|
-| `decision` | S | `BUY_CANDIDATE` \| `HOLD` \| `EXIT` \| `NOT_ELIGIBLE` \| `REGIME_OFF` \| `NO_DATA` |
-| `reason` | S\|null | short human reason (e.g. `below_trend_ma`, `rank_exit`) |
+| `decision` | S | `BUY_CANDIDATE` \| `RANKED_NOT_BOUGHT` \| `HOLD` \| `EXIT` \| `NOT_ELIGIBLE` \| `REGIME_OFF` \| `NO_DATA` |
+| `reason` | S\|null | short human reason (e.g. `below_trend_ma`, `rank_exit`, `candidate_no_slot`) |
+
+> **`BUY_CANDIDATE` means a position was *opened* this scan** (count actual buys off
+> `decision === "BUY_CANDIDATE"`). An eligible name that ranked but wasn't bought —
+> no free slot, or below the entry-rank cut — is **`RANKED_NOT_BOUGHT`** (`reason`
+> distinguishes `candidate_no_slot` vs `below_entry_rank`). Reports must not conflate
+> the two; `4c` `/stats`/`/analyze` key off this distinction.
 | `momentum` | N\|null | the score: annualized exp-regression slope × R² |
 | `slope` | N\|null | raw regression slope (log-price) |
 | `r2` | N\|null | regression R² (trend smoothness) |

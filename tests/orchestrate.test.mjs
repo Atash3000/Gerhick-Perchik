@@ -176,3 +176,57 @@ test("planScan: regime OFF → non-held eligible names are REGIME_OFF, holdings 
   assert.equal(dec.HELD, "HOLD"); // existing position still managed
   assert.equal(plan.buys.length, 0); // nothing bought
 });
+
+// --- review round 4 fixes --------------------------------------------------
+
+test("#1 decision: BUY_CANDIDATE = bought; eligible-but-not-bought = RANKED_NOT_BOUGHT", () => {
+  const gathered = [
+    { ticker: "BUY", sector: "T", md: md({ close: 100, ma100: 50 }), eligibility: elig() },
+    { ticker: "NOSLOT", sector: "T", md: md({ close: 100, ma100: 50 }), eligibility: elig() },
+    { ticker: "LOWRANK", sector: "T", md: md({ close: 100, ma100: 50 }), eligibility: elig() },
+  ];
+  const ranked = [
+    rankRow("BUY", 1, { entry: true }),
+    rankRow("NOSLOT", 2, { entry: true }), // entry zone but no slot (target 1)
+    rankRow("LOWRANK", 5, { entry: false }), // eligible, below entry rank
+  ];
+  const plan = planScan({
+    config: { ...CFG, targetPositions: 1 }, regimeOn: true, asOf: "2026-06-26",
+    gathered, ranked, openOutcomes: [], governor: { blockNewBuys: false }, accountValue: ACCOUNT,
+  });
+  const dec = Object.fromEntries(plan.snapshots.map((s) => [s.result.ticker, s.result.decision]));
+  assert.equal(dec.BUY, "BUY_CANDIDATE"); // ONLY the actually-opened position
+  assert.equal(dec.NOSLOT, "RANKED_NOT_BOUGHT");
+  assert.equal(dec.LOWRANK, "RANKED_NOT_BOUGHT");
+  assert.deepEqual(plan.buys.map((b) => b.result.ticker), ["BUY"]);
+});
+
+test("#2 spy context: planScan stamps the SPY block onto every snapshot (not spy:null)", () => {
+  const spy = { spyBelow200ma: false, asOf: "2026-06-26", return126d: 12.1 };
+  const gathered = [{ ticker: "A", sector: "T", md: md({ close: 100, ma100: 50 }), eligibility: elig() }];
+  const plan = planScan({
+    config: CFG, regimeOn: true, asOf: "2026-06-26", gathered,
+    ranked: [rankRow("A", 1, { entry: true })], openOutcomes: [], governor: { blockNewBuys: false },
+    accountValue: ACCOUNT, spy,
+  });
+  assert.deepEqual(plan.snapshots[0].spy, spy);
+});
+
+test("#3 counters: executePlan counts only truthy updated/closed returns (honest tally)", async () => {
+  const plan = {
+    snapshots: [],
+    refreshes: [{ pk: "a", sk: 1, stop: 1, peakClose: 1 }, { pk: "b", sk: 1, stop: 1, peakClose: 1 }],
+    exits: [{ pk: "c", sk: 1, fields: {} }, { pk: "d", sk: 1, fields: {} }],
+    buys: [],
+  };
+  let nRef = 0, nClose = 0;
+  const store = {
+    async writeMomentumSnapshot() { return {}; },
+    async updateOpenPosition() { nRef++; return { updated: nRef === 1 }; }, // 2nd skipped (closed-row guard)
+    async closeOutcome() { nClose++; return { closed: nClose === 1 }; }, // 2nd skipped
+    async openMomentumOutcome() { return { opened: true }; },
+  };
+  const r = await executePlan(plan, { store, snapshotsOnly: false, scanId: "s", params: PARAMS });
+  assert.equal(r.refreshed, 1); // only the truthy update counted
+  assert.equal(r.exitsClosed, 1);
+});
