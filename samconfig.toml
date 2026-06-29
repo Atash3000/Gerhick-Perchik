@@ -24,21 +24,18 @@ tags = "Project=gerchik-perchik"
 # Pinned parameters. NOTE: cron schedules are NOT here — SAM space-splits
 # parameter values and corrupts a cron string, so the crons are inlined as
 # literals in template.yaml instead. Only space-free values are safe here.
-# - ScheduleEnabled=false: PAUSED for the gp-2.0.0 → gp-momentum-1.0.0 migration.
-#   STRATEGY_VERSION is now "gp-momentum-1.0.0", but the scanner still runs the OLD
-#   gate-and-score logic until the momentum scanner ships (build-order step 4). If
-#   the schedule ran now it would write old-logic snapshots/outcomes stamped with
-#   the momentum version — mislabeled records that corrupt the (just-wiped) tables
-#   and break "never pool across strategy versions". A runtime /stop can't protect
-#   this because the next deploy re-enables the rule from this param, so the pause
-#   lives here (deploy-time) for the duration of the migration.
-#   RE-ENABLE (back to "true") only once the momentum scanner is live in step 4, so
-#   the momentum label finally matches momentum logic.
+# - ScheduleEnabled=true: the gp-momentum-1.0.0 engine is LIVE in OBSERVE mode (4d).
+#   Steps 1–4c are merged + deployed + dry-run-verified; the momentum label now
+#   matches momentum logic, so the scanner/labeler schedules run on their weekday
+#   cron. This is observe-only — no real money, no trades; it accumulates the
+#   forward-observe sample. (Going live = alertMode 'live', a separate human act.)
+#   NOTE (issue #70): a deploy doesn't reliably toggle the live EventBridge rule, so
+#   re-enabling was also done directly (events:EnableRule) and verified ENABLED.
 # - Telegram SSM paths pinned: the Lambda reads /gerchik-perchik/telegram/*, and
 #   CloudFormation otherwise keeps stale pre-rename values (UsePreviousValue),
 #   leaving the IAM role scoped to old paths → AccessDenied. Pinning matches code.
 parameter_overrides = [
-  "ScheduleEnabled=false", # PAUSED for the momentum migration — see note above; re-enable at step 4
+  "ScheduleEnabled=true", # gp-momentum-1.0.0 LIVE in observe mode (4d) — see note above
   # Dedicated Gerchik-Perchik Tiingo key (issue #33). Pinning this re-scopes the
   # scanner/labeler ssm:GetParameter IAM to this ARN (template Resource follows
   # ${TiingoKeyPath}) and sets TIINGO_KEY_PATH env → KEY_PATHS → gp_keypaths log.
