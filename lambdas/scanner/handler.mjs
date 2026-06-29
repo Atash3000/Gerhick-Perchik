@@ -51,7 +51,7 @@ export async function gatherUniverse(tickers, config, { fetchBars, now }) {
       const md = buildMomentumData(t.ticker, bars, config, { now });
       const eligibility = md.fresh
         ? isEligible(bars, config)
-        : { eligible: false, insufficientHistory: /insufficient/i.test(md.reason ?? ""), checks: null };
+        : { eligible: false, insufficientHistory: md.insufficientHistory === true, checks: null };
       out.push({ ticker: t.ticker, sector: t.sector, md, eligibility });
     } catch (err) {
       console.error(`gp_scan_failed: ${t.ticker}: ${err.message}`);
@@ -172,8 +172,16 @@ export async function handler(event) {
 
   const store = createStore();
   const watchlist = await loadEnabledWatchlist(process.env.WATCHLIST_TABLE);
-  // Held book = OPEN outcomes for THIS strategy version (never mix versions).
-  const openOutcomes = (await store.listOpenOutcomes()).filter((o) => o.strategyVersion === STRATEGY_VERSION);
+  // Held book = ALL open positions, NOT version-filtered. A held position must
+  // ALWAYS be managed (its trailing stop refreshed, its exits checked) — a held
+  // position is a held position. Filtering by STRATEGY_VERSION here would orphan a
+  // position from management across a future version bump: its trail would freeze
+  // and it'd exit at a stale stop. strategyVersion governs STAMPING new rows and
+  // outcome ANALYSIS (never pool win-rates across versions), not which positions
+  // get managed. New entries are still stamped the current version downstream.
+  // (Cross-version coexistence wind-down is tracked separately; today all open
+  // positions are momentum, so this is exact.)
+  const openOutcomes = await store.listOpenOutcomes();
 
   const tickers = unionTickers(watchlist, openOutcomes);
   const gathered = await gatherUniverse(tickers, config, { fetchBars: (t) => getDailyBars(t, { now }), now });

@@ -462,14 +462,16 @@ export function buildMomentumData(ticker, bars, config, { now = new Date() } = {
   // 100-day trend MA, the 90-day momentum + gap windows, the ATR period).
   const minBars =
     Math.max(config.trendMa, config.momentumLookback, config.gapFilterWindow + 1, config.atrPeriod, 200) + 1;
-  if (!Array.isArray(bars) || bars.length < minBars || !fresh) {
+  const tooShort = !Array.isArray(bars) || bars.length < minBars;
+  if (tooShort || !fresh) {
     return {
       ticker,
       fresh: false,
       dataAsOf,
-      reason: !fresh
-        ? `stale feed: latest bar ${dataAsOf} < expected ${expected}`
-        : `insufficient history: ${bars.length} bars (< ${minBars})`,
+      insufficientHistory: tooShort, // structured flag — consumers read this, not the reason string
+      reason: tooShort
+        ? `insufficient history: ${Array.isArray(bars) ? bars.length : 0} bars (< ${minBars})`
+        : `stale feed: latest bar ${dataAsOf} < expected ${expected}`,
     };
   }
   const closes = bars.map((b) => b.close);
