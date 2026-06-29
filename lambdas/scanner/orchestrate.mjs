@@ -34,7 +34,7 @@ function failedCheckReason(eligibility) {
 //   openOutcomes: the held book (open momentum outcome rows)
 //   governor    : riskGovernor() result
 // Returns { snapshots, refreshes, exits, buys }.
-export function planScan({ config, regimeOn, asOf, gathered, ranked, openOutcomes, governor, accountValue }) {
+export function planScan({ config, regimeOn, asOf, gathered, ranked, openOutcomes, governor, accountValue, spy = null }) {
   const byTicker = new Map((gathered ?? []).map((g) => [g.ticker, g]));
   const rankByT = new Map((ranked ?? []).map((r) => [r.ticker, r]));
   const openByT = new Map((openOutcomes ?? []).map((o) => [o.ticker, o]));
@@ -132,8 +132,11 @@ export function planScan({ config, regimeOn, asOf, gathered, ranked, openOutcome
     else if (held) { decision = "HOLD"; reason = "held"; }
     else if (!regimeOn) { decision = "REGIME_OFF"; reason = "spy_below_regime_ma"; }
     else if (!(g.eligibility?.eligible)) { decision = "NOT_ELIGIBLE"; reason = failedCheckReason(g.eligibility); }
+    // BUY_CANDIDATE means ONLY "opened a position" — so a report keying off decision
+    // counts actual buys. An eligible name that ranked but wasn't bought (no free
+    // slot, or below the entry-rank cut) is RANKED_NOT_BOUGHT (reason disambiguates).
     else if (boughtT.has(g.ticker)) { decision = "BUY_CANDIDATE"; reason = "bought"; }
-    else { decision = "BUY_CANDIDATE"; reason = r?.inEntryZone ? "candidate_no_slot" : "below_entry_rank"; }
+    else { decision = "RANKED_NOT_BOUGHT"; reason = r?.inEntryZone ? "candidate_no_slot" : "below_entry_rank"; }
 
     // Position fields: bought → from the new buy; held → from the outcome (refreshed if so).
     const bought = buys.find((b) => b.result.ticker === g.ticker);
@@ -148,6 +151,7 @@ export function planScan({ config, regimeOn, asOf, gathered, ranked, openOutcome
     snapshots.push({
       sector: g.sector,
       marketData: m,
+      spy, // capture-only SPY regime context (handler-injected), same on every row
       result: {
         ticker: g.ticker, decision, reason,
         dataAsOf: m?.dataAsOf ?? asOf, strategyVersion: STRATEGY_VERSION,
@@ -189,12 +193,12 @@ export async function executePlan(plan, { store, sendAlert, snapshotsOnly = fals
   }
 
   for (const rf of plan.refreshes) {
-    await store.updateOpenPosition(rf.pk, rf.sk, { stop: rf.stop, peakClose: rf.peakClose });
-    refreshed += 1;
+    const r = await store.updateOpenPosition(rf.pk, rf.sk, { stop: rf.stop, peakClose: rf.peakClose });
+    if (r?.updated) refreshed += 1; // count only real updates — a closed-row skip mustn't inflate the tally
   }
   for (const ex of plan.exits) {
-    await store.closeOutcome(ex.pk, ex.sk, ex.fields);
-    exitsClosed += 1;
+    const c = await store.closeOutcome(ex.pk, ex.sk, ex.fields);
+    if (c?.closed) exitsClosed += 1; // count only real closes
   }
   for (const b of plan.buys) {
     const opened = await store.openMomentumOutcome(b.result, { sector: b.sector, scanId });
