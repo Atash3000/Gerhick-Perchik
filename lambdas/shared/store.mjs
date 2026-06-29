@@ -201,6 +201,10 @@ export function normalizeMomentumExitReason(reason) {
     trend_exit: "trend_exit",
     RANK: "rank_exit",
     rank_exit: "rank_exit",
+    // v2: a human close and a defensive close on bad/missing data (never a silent
+    // NaN). No internal-constant alias — these are set explicitly, not by evaluateExits.
+    manual: "manual",
+    data_error: "data_error",
   };
   return map[reason] ?? null;
 }
@@ -372,9 +376,26 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
 
     // Momentum-v1 entry outcome. Same idempotent conditional put as openOutcome(),
     // but stores the momentum entry snapshot instead of gp-2.0.0 score/target data.
-    async openMomentumOutcome(result, { sector = null } = {}) {
+    async openMomentumOutcome(result, { sector = null, scanId = null } = {}) {
       const entryDate = result.dataAsOf;
       if (!entryDate) throw new Error(`cannot open outcome ${result.ticker}: no entry date`);
+      // Fail loud on the position-defining fields — a BUY outcome with a non-finite
+      // entry/stop/shares is malformed and would poison the labeler's first-touch
+      // math. Better to error than silently write a corrupt tracked trade. (entryAtr/
+      // initialRiskPct stay nullable — audit-only; the labeler uses entry/stop and
+      // the scanner's exits use current ATR, not the stored entryAtr.)
+      const required = { entry: result.entry, stop: result.stop, shares: result.shares };
+      const bad = Object.entries(required).filter(([, v]) => !Number.isFinite(v)).map(([k]) => k);
+      if (bad.length) {
+        throw new Error(`cannot open momentum outcome ${result.ticker}: non-finite required field(s): ${bad.join(", ")}`);
+      }
+      const entry = nullableNumber(result.entry);
+      const stop = nullableNumber(result.stop);
+      // Entry-price separation (schema v2). OBSERVE: entry = plannedEntry =
+      // signalClose (the only price knowable at scan time — see the schema's
+      // observe-approximation note; the precise next-day-open fill is the step-5
+      // backtest's job, and actualEntry is filled only in live trading).
+      const signalClose = nullableNumber(result.signalClose ?? result.entry, 2);
       const item = {
         pk: `SIGNAL#${result.ticker}#${entryDate}`,
         sk: epochMs(entryDate),
@@ -383,12 +404,25 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
         entryDate,
         status: "OPEN",
         strategyVersion: result.strategyVersion ?? STRATEGY_VERSION,
-        entry: nullableNumber(result.entry),
-        stop: nullableNumber(result.stop),
+        scanId: scanId ?? null, // the scan run that opened this position (schema v2)
+        entry,
+        stop,
         // peakClose seeds the chandelier trail. At entry the highest close since
         // entry IS the entry, so default to entry — the scanner (4b) reads this back
         // into evaluateExits/updateTrailingStop, which require a finite peakClose.
         peakClose: nullableNumber(result.peakClose ?? result.entry, 2),
+        // Entry-price separation (schema v2): signalClose triggered the signal;
+        // plannedEntry is the intended fill (= signalClose in observe); actualEntry/
+        // fillSlippagePct are null until live trading.
+        signalClose,
+        plannedEntry: nullableNumber(result.plannedEntry ?? result.entry, 2),
+        actualEntry: nullableNumber(result.actualEntry), // null until live
+        fillSlippagePct: nullableNumber(result.fillSlippagePct), // null until live
+        // Sizing audit (schema v2): prove the ATR sizing actually worked.
+        entryAtr: nullableNumber(result.entryAtr, 4),
+        initialRiskPerShare:
+          Number.isFinite(entry) && Number.isFinite(stop) ? Math.round((entry - stop) * 1e4) / 1e4 : null,
+        initialRiskPct: nullableNumber(result.initialRiskPct, 4),
         momentum: nullableNumber(result.momentum),
         slope: nullableNumber(result.slope),
         r2: nullableNumber(result.r2),

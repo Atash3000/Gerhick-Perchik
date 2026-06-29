@@ -93,12 +93,16 @@ un-trustworthy. Stored once per scan (identical across the run's rows).
 
 | field | type | meaning |
 |---|---|---|
-| `eligible` | B | passed all eligibility checks |
-| `checks.price` | B | price ≥ `minPrice` |
-| `checks.dollarVol` | B | 20-day avg dollar volume ≥ `minDollarVol` |
-| `checks.trend` | B | close > `trendMa` SMA |
-| `checks.noBigMove` | B | no ≥`gapFilterPct` single-day (close-to-close) move in `gapFilterWindow` |
-| `insufficientHistory` | B | too few bars to score (dropped from ranking) |
+| `eligible` | B | passed all eligibility checks (always boolean) |
+| `checks.price` | B\|null | price ≥ `minPrice` |
+| `checks.dollarVol` | B\|null | 20-day avg dollar volume ≥ `minDollarVol` |
+| `checks.trend` | B\|null | close > `trendMa` SMA |
+| `checks.noBigMove` | B\|null | no ≥`gapFilterPct` single-day (close-to-close) move in `gapFilterWindow` |
+| `insufficientHistory` | B | too few bars to score (dropped from ranking; always boolean) |
+
+The `checks.*` are **`B|null`**: `null` for decision classes where eligibility was
+never evaluated (`REGIME_OFF`, `NO_DATA`). The store writes them with nullable
+booleans (`momentumChecks`) — don't assume non-null in analysis.
 
 ### D. Market / regime context — CARRIED OVER (more central to momentum than before)
 
@@ -161,15 +165,15 @@ the v2 audit/entry-price additions.
 | `scanId` | S | **NEW** — the scan run that opened this position |
 | `momentum`, `slope`, `r2`, `rank`, `rankPct` | N | the momentum snapshot **at entry** (replaces `score`/`breakdown`) |
 
-### Entry-price separation — NEW (next-day-open fills, no ambiguity)
+### Entry-price separation — NEW
 
 | field | type | meaning |
 |---|---|---|
-| `signalClose` | N | the close that triggered the signal |
-| `plannedEntry` | N | intended fill = next day's open (the strategy's fill rule) |
+| `signalClose` | N | the close that triggered the signal (day-T close) |
+| `plannedEntry` | N | intended fill. **Backtest/live: next day's open** (§9 fill rule). **OBSERVE: = `signalClose`** — T+1's open is unknowable when the scanner runs after T's close, so observe uses the signal close (a small, deliberate approximation; the precise next-day-open fill is the step-5 backtest's job). |
 | `actualEntry` | N\|null | real fill price — **null until real (live) trading** |
 | `fillSlippagePct` | N\|null | actual vs planned — **null until real (live) trading** |
-| `entry` | N | the entry used for sizing/stops (= `plannedEntry` in observe/backtest) |
+| `entry` | N | the entry used for sizing/stops, = `plannedEntry` (so = `signalClose` in observe, next-day open in backtest) |
 
 ### Sizing audit — NEW (prove the sizing actually worked)
 
@@ -185,8 +189,9 @@ the v2 audit/entry-price additions.
 
 | field | type | meaning |
 |---|---|---|
-| `outcome` | S | `OPEN` \| `CLOSED` \| `TIMEOUT` (no `TARGET` — momentum has no target) |
-| `exitReason` | S | `hard_stop` \| `trailing_stop` \| `rank_exit` \| `trend_exit` \| `manual` \| `data_error` |
+| `status` | S | lifecycle: `OPEN` → `CLOSED` (NOT the result; carried over) |
+| `outcome` | S\|null | result type: `STOP` \| `EXIT` \| `TIMEOUT` (null while `OPEN`; **no `TARGET`** — momentum has none). `STOP` = labeler stop touch; `EXIT` = scanner rank/trend close; `TIMEOUT` = held to the window end. |
+| `exitReason` | S\|null | the granular cause: `hard_stop` \| `trailing_stop` (→ `STOP`); `rank_exit` \| `trend_exit` (→ `EXIT`); `manual` \| `data_error`; null for `TIMEOUT` |
 | `exitDate`, `daysHeld` | — | labeler |
 | `profitPct` | N | **after-cost** return (labeler — keep cost subtraction; scanner-closed exits use the SAME cost math) |
 | `mfePct`/`maePct` (+ prices) | N | price travel for stop tuning (labeler — keep) |
