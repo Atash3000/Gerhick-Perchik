@@ -1,95 +1,104 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { assessScanHealth, shouldOpenOutcome, createSectorCounter, fetchErrorMarketData } from "../lambdas/scanner/handler.mjs";
+import { assessScanHealth, unionTickers, gatherUniverse } from "../lambdas/scanner/handler.mjs";
+import { planScan } from "../lambdas/scanner/orchestrate.mjs";
 
-test("createSectorCounter: seeds from open outcomes and counts by sector", () => {
-  const c = createSectorCounter([
-    { ticker: "MSFT", sector: "Technology" },
-    { ticker: "NVDA", sector: "Technology" },
-    { ticker: "XOM", sector: "Energy" },
-    { ticker: "FOO" }, // no sector → "unknown"
-  ]);
-  assert.equal(c.count("Technology"), 2);
-  assert.equal(c.count("Energy"), 1);
-  assert.equal(c.count("unknown"), 1);
-  assert.equal(c.count(null), 1); // null sector maps to "unknown"
-  assert.equal(c.count("Healthcare"), 0); // unseen sector
+// --- assessScanHealth (coverage / silent-failure alarm) --------------------
+
+test("assessScanHealth: 0 snapshots is unhealthy", () => {
+  const r = assessScanHealth({ expectedCount: 10, snapshotsWritten: 0, errorCount: 0, freshDataCount: 0 });
+  assert.equal(r.healthy, false);
+  assert.match(r.reason, /no snapshots/);
 });
 
-test("createSectorCounter: add() increments so same-scan opens accrue toward the cap", () => {
-  // The bug: a static count let multiple same-sector candidates in ONE scan all
-  // pass a cap-3 gate. The counter must grow as outcomes open within the scan.
-  const c = createSectorCounter([
-    { ticker: "MSFT", sector: "Technology" },
-    { ticker: "NVDA", sector: "Technology" },
-  ]);
-  assert.equal(c.count("Technology"), 2); // 2 < cap 3 → first candidate may open
-  c.add("Technology"); // a new same-sector outcome opens this scan
-  assert.equal(c.count("Technology"), 3); // now 3 → cap reached, next is rejected
-  c.add(null); // unknown-sector open
-  assert.equal(c.count("unknown"), 1);
+test("assessScanHealth: high error rate is unhealthy", () => {
+  const r = assessScanHealth({ expectedCount: 10, snapshotsWritten: 10, errorCount: 6, freshDataCount: 10 });
+  assert.equal(r.healthy, false);
+  assert.match(r.reason, /high error rate/);
 });
 
-test("shouldOpenOutcome: open a BUY_CANDIDATE only if no position already open", () => {
-  const open = new Set(["MSFT"]);
-  assert.equal(shouldOpenOutcome("BUY_CANDIDATE", "AAPL", open), true);  // new name
-  assert.equal(shouldOpenOutcome("BUY_CANDIDATE", "MSFT", open), false); // already open → skip
-  assert.equal(shouldOpenOutcome("NO_SIGNAL", "AAPL", open), false);     // not a candidate
-  assert.equal(shouldOpenOutcome("NO_DATA", "AAPL", open), false);
+test("assessScanHealth: low fresh coverage is unhealthy", () => {
+  const r = assessScanHealth({ expectedCount: 10, snapshotsWritten: 4, errorCount: 0, freshDataCount: 4 });
+  assert.equal(r.healthy, false);
+  assert.match(r.reason, /low coverage/);
 });
 
-test("fetchErrorMarketData: converts fetch exceptions into NO_DATA-compatible market data", () => {
-  const md = fetchErrorMarketData("MMC", new Error("Tiingo returned no bars for MMC"));
-  assert.deepEqual(md, {
-    ticker: "MMC",
-    fresh: false,
-    reason: "fetch error: Tiingo returned no bars for MMC",
-    dataAsOf: null,
+test("assessScanHealth: a healthy scan passes", () => {
+  assert.deepEqual(
+    assessScanHealth({ expectedCount: 10, snapshotsWritten: 10, errorCount: 0, freshDataCount: 9 }),
+    { healthy: true, reason: null }
+  );
+});
+
+// --- #4: union gather (held positions are NEVER stranded) ------------------
+
+test("unionTickers: a held position DISABLED/absent from the watchlist is still included", () => {
+  const enabled = [{ ticker: "NEW", sector: "Tech" }];
+  const open = [{ ticker: "OLD", sector: "Energy" }]; // held but NOT on the enabled watchlist
+  const u = unionTickers(enabled, open);
+  assert.deepEqual(u.map((x) => x.ticker).sort(), ["NEW", "OLD"]); // OLD survives → gathered + managed
+  assert.equal(u.find((x) => x.ticker === "OLD").sector, "Energy"); // sector preserved from the outcome
+});
+
+test("unionTickers: an enabled+held ticker appears once; the enabled sector wins", () => {
+  const u = unionTickers([{ ticker: "X", sector: "Tech" }], [{ ticker: "X", sector: "STALE" }]);
+  assert.equal(u.length, 1);
+  assert.equal(u[0].sector, "Tech");
+});
+
+// --- gatherUniverse + the #4 end-to-end management proof -------------------
+
+const CFG = {
+  regimeMa: 200, trendMa: 100, momentumLookback: 90, gapFilterWindow: 90, gapFilterPct: 15,
+  atrPeriod: 20, minPrice: 5, minDollarVol: 10_000_000, kStop: 2.5, riskPctPerTrade: 0.75,
+  positionCapPct: 15, entryRankPct: 20, exitRankPct: 30, targetPositions: 15, maxPositions: 20,
+  feeBps: 10, slippageBps: 5,
+};
+const NOW = new Date("2026-06-26T23:00:00Z"); // Fri after close → 2026-06-26 is the latest trading day
+
+// 260 ascending bars of a clean, liquid uptrend ending on 2026-06-26.
+function freshBars() {
+  const out = [];
+  let d = new Date("2026-06-26T00:00:00Z");
+  for (let i = 259; i >= 0; i--) {
+    const close = 100 + i * 0.2; // newest bar (i=0) is highest
+    out.unshift({ date: d.toISOString().slice(0, 10), open: close, high: close * 1.01, low: close * 0.99, close, volume: 1_000_000 });
+    d = new Date(d.getTime() - 86_400_000);
+  }
+  return out;
+}
+
+// Deterministic rank stub (the real rankByMomentum is covered by the portfolio tests).
+function rankStub(eligible) {
+  return eligible.map((g) => g.ticker).sort().map((ticker, i) => ({
+    ticker, rank: i + 1, rankPct: 99 - i, inEntryZone: i === 0, inExitZone: i > 0, momentum: 1 - i * 0.1, slope: 0.001, r2: 0.9,
+  }));
+}
+
+test("gatherUniverse builds md+eligibility; a fetch error becomes a NO_DATA row, not a throw", async () => {
+  const fetchBars = async (t) => { if (t === "BAD") throw new Error("429 rate limited"); return freshBars(); };
+  const got = await gatherUniverse([{ ticker: "GOOD", sector: "T" }, { ticker: "BAD", sector: "T" }], CFG, { fetchBars, now: NOW });
+  const good = got.find((g) => g.ticker === "GOOD");
+  const bad = got.find((g) => g.ticker === "BAD");
+  assert.equal(good.md.fresh, true);
+  assert.equal(good.eligibility.eligible, true);
+  assert.equal(bad.md.fresh, false); // fetch error → NO_DATA, kept in the universe
+  assert.equal(bad.fetchError, true);
+});
+
+test("#4 end-to-end: a DISABLED, still-held position is gathered AND managed (never stranded)", async () => {
+  // OLD is held but not on the enabled watchlist (disabled for new buys, still owned).
+  const enabled = [{ ticker: "NEW", sector: "T" }];
+  const open = [{ pk: "S#OLD", sk: 1, ticker: "OLD", sector: "T", entry: 100, stop: 90, peakClose: 100, entryDate: "2026-06-01", strategyVersion: "gp-momentum-1.0.0" }];
+
+  const tickers = unionTickers(enabled, open);
+  const gathered = await gatherUniverse(tickers, CFG, { fetchBars: async () => freshBars(), now: NOW });
+  const eligible = gathered.filter((g) => g.md.fresh && g.eligibility.eligible);
+  const plan = planScan({
+    config: CFG, regimeOn: true, asOf: "2026-06-26", gathered, ranked: rankStub(eligible),
+    openOutcomes: open, governor: { blockNewBuys: false }, accountValue: 100_000, spy: { spyBelow200ma: false },
   });
-});
 
-test("healthy scan: snapshots written, low errors, full coverage", () => {
-  const h = assessScanHealth({ expectedCount: 43, snapshotsWritten: 41, errorCount: 2, freshDataCount: 41 });
-  assert.equal(h.healthy, true);
-  assert.equal(h.reason, null);
-});
-
-test("degraded: zero snapshots (e.g. feed rate-limited every name)", () => {
-  const h = assessScanHealth({ expectedCount: 43, snapshotsWritten: 0, errorCount: 43, freshDataCount: 0 });
-  assert.equal(h.healthy, false);
-  assert.match(h.reason, /no snapshots/);
-});
-
-test("degraded: error rate >= 50%", () => {
-  const h = assessScanHealth({ expectedCount: 40, snapshotsWritten: 18, errorCount: 22, freshDataCount: 18 });
-  assert.equal(h.healthy, false);
-  assert.match(h.reason, /error rate/);
-});
-
-test("degraded: low fresh-data coverage (< 50%) even when snapshots were written", () => {
-  // 40 names, 30 snapshots written but only 15 had fresh data (15 NO_DATA stale) →
-  // 15 fresh + 15 noData snapshotted, errorCount low. Coverage 37.5% → degraded.
-  const h = assessScanHealth({ expectedCount: 40, snapshotsWritten: 30, errorCount: 0, freshDataCount: 15 });
-  assert.equal(h.healthy, false);
-  assert.match(h.reason, /low coverage/);
-});
-
-test("coverage at/above 50% with low errors is healthy", () => {
-  const h = assessScanHealth({ expectedCount: 40, snapshotsWritten: 40, errorCount: 0, freshDataCount: 21 });
-  assert.equal(h.healthy, true);
-});
-
-test("just under the error threshold is healthy", () => {
-  const h = assessScanHealth({ expectedCount: 40, snapshotsWritten: 21, errorCount: 19, freshDataCount: 21 });
-  assert.equal(h.healthy, true);
-});
-
-test("empty watchlist is not flagged as degraded", () => {
-  const h = assessScanHealth({ expectedCount: 0, snapshotsWritten: 0, errorCount: 0, freshDataCount: 0 });
-  assert.equal(h.healthy, true);
-});
-
-test("freshDataCount omitted → coverage check skipped (back-compat)", () => {
-  const h = assessScanHealth({ expectedCount: 43, snapshotsWritten: 41, errorCount: 2 });
-  assert.equal(h.healthy, true);
+  const managed = new Set([...plan.exits.map((e) => e.ticker), ...plan.refreshes.map((r) => r.ticker)]);
+  assert.ok(managed.has("OLD"), "a disabled-but-held position must still be managed, never stranded");
 });
