@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { labelSignal, OUTCOME, spyBenchmark, afterCostProfitPct, excursion } from "../lambdas/shared/labeling.mjs";
+import { labelSignal, OUTCOME, spyBenchmark, afterCostProfitPct, excursion, momentumStopExitReason } from "../lambdas/shared/labeling.mjs";
 
 const SIGNAL = { entry: 100, stop: 97, target: 110, entryDate: "2026-06-18" };
 const CONFIG = { feeBps: 10, slippageBps: 5, timeoutTradingDays: 5 };
@@ -284,4 +284,12 @@ test("excursion reports MFE/MAE % and prices from entry (gross, price travel)", 
   assert.equal(e.maePct, -5);
   assert.equal(e.mfePrice, 130);
   assert.equal(e.maePrice, 95);
+});
+
+test("momentumStopExitReason: a momentum stop-out gets hard_stop / trailing_stop (the 4d gate)", () => {
+  assert.equal(momentumStopExitReason("STOP", 100, 90), "hard_stop");      // stop below entry → catastrophe floor
+  assert.equal(momentumStopExitReason("STOP", 100, 100), "hard_stop");     // stop == entry → still the floor
+  assert.equal(momentumStopExitReason("STOP", 100, 112), "trailing_stop"); // stop trailed up into profit
+  assert.equal(momentumStopExitReason("TIMEOUT", 100, 90), null);          // not a stop → no stop reason
+  assert.equal(momentumStopExitReason("STOP", NaN, 90), "hard_stop");      // defensive on bad data
 });

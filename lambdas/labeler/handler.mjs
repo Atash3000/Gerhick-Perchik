@@ -13,7 +13,7 @@
 
 import { getActiveConfig } from "../shared/config.mjs";
 import { getDailyBars, KEY_PATHS } from "../shared/marketdata.mjs";
-import { labelSignal, spyBenchmark } from "../shared/labeling.mjs";
+import { labelSignal, spyBenchmark, momentumStopExitReason } from "../shared/labeling.mjs";
 import { createStore } from "../shared/store.mjs";
 import { STRATEGY_VERSION } from "../shared/version.mjs";
 
@@ -70,6 +70,9 @@ export async function handler() {
 
       const res = await store.closeOutcome(o.pk, o.sk, {
         outcome: label.outcome,
+        // Schema v2: a labeler STOP touch records hard_stop / trailing_stop so the
+        // validation sample carries the granular exit reason (scanner owns rank/trend).
+        exitReason: momentumStopExitReason(label.outcome, o.entry, o.stop),
         hitTargetFirst: label.hitTargetFirst,
         hitStopFirst: label.hitStopFirst,
         exitDate: label.exitDate,

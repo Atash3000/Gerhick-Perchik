@@ -20,6 +20,17 @@ export const OUTCOME = { STOP: "STOP", TARGET: "TARGET", TIMEOUT: "TIMEOUT" };
 // Split adjustment beyond this magnitude is treated as a split (vs a dividend).
 const SPLIT_THRESHOLD = 0.02; // |scaleFactor - 1| > 2%
 
+// The momentum exit reason for a LABELER-closed STOP touch (schema v2): hard_stop
+// when the (scanner-refreshed) stop is still at/below entry — the catastrophe floor;
+// trailing_stop once it has trailed up into profit. Only STOP closes get a reason
+// here — TIMEOUT → null, and the scanner owns rank_exit/trend_exit. Without this the
+// validation sample would be missing hard_stop/trailing_stop on every stop-out.
+export function momentumStopExitReason(outcome, entry, stop) {
+  if (outcome !== "STOP") return null;
+  if (!Number.isFinite(entry) || !Number.isFinite(stop)) return "hard_stop"; // defensive
+  return stop <= entry ? "hard_stop" : "trailing_stop";
+}
+
 // After-cost return %, anchored to the entry (a split-invariant ratio). Costs apply
 // on BOTH sides: 2*(feeBps+slippageBps) bps. EXPORTED so the scanner's rank/trend
 // closes deduct costs IDENTICALLY to the labeler's stop/target/timeout closes — one
