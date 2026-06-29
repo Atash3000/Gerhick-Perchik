@@ -242,6 +242,7 @@ export async function handler(event) {
     outcomesOpened: exec.outcomesOpened,
     snapshotsWritten: exec.snapshotsWritten,
     alertsSent: exec.alertsSent,
+    alertErrors: exec.alertErrors, // honest tally — tolerated alert failures (not a scan failure)
     alertMode: config.alertMode,
   };
 

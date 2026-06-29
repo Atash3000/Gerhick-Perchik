@@ -189,7 +189,7 @@ export async function executePlan(plan, { store, sendAlert, snapshotsOnly = fals
   }
 
   if (snapshotsOnly) {
-    return { snapshotsWritten, outcomesOpened: 0, exitsClosed: 0, refreshed: 0, alertsSent: 0, snapshotsOnly: true };
+    return { snapshotsWritten, outcomesOpened: 0, exitsClosed: 0, refreshed: 0, alertsSent: 0, alertErrors: 0, snapshotsOnly: true };
   }
 
   for (const rf of plan.refreshes) {
@@ -212,7 +212,10 @@ export async function executePlan(plan, { store, sendAlert, snapshotsOnly = fals
           alertsSent += 1;
         } catch (err) {
           alertErrors += 1;
-          console.error(`gp_scan_failed: alert ${b.result?.ticker}: ${err.message}`);
+          // WARN, NOT the gp_scan_failed alarm keyword: a tolerated alert failure
+          // must not page (the scan succeeded — and the page would go through the
+          // same Telegram that's down). Mirrors marketdata's tolerated-WARN pattern.
+          console.warn(`gp_alert_failed: ${b.result?.ticker}: ${err.message}`);
         }
       }
     }
