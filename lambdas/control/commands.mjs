@@ -9,7 +9,7 @@ export const HELP = [
   "/enable <TICKER> — add a ticker to the active scan",
   "/disable <TICKER> — remove it",
   "/stats [30d] — outcome summary for the current strategy version",
-  "/analyze [30d] — Phase 8 deep-dive: profit factor + component predictors",
+  "/analyze [30d] — deep-dive: profit factor + performance by rank %",
   "/bought <TICKER> <SHARES> <PRICE> — confirm a manual buy (links latest GP signal)",
   "/sell <TICKER> <SHARES> <PRICE> — sell part or all of an open position",
   "/skip <TICKER> [reason] — record that you skipped a signal",
@@ -43,16 +43,20 @@ function realizedR(o) {
   return o.profitPct / riskPct;
 }
 
-function bucketKey(score) {
-  if (typeof score !== "number") return "n/a";
-  return `${Math.floor(score / 10) * 10}s`;
+// Momentum buckets by rank PERCENTILE band (1 = strongest). gp-2.0.0's `score` is
+// gone; rankPct tells us whether the strongest-ranked names actually won more.
+function rankBucket(rankPct) {
+  if (typeof rankPct !== "number" || !Number.isFinite(rankPct)) return "n/a";
+  const lo = Math.min(80, Math.floor(rankPct / 20) * 20);
+  return `${lo}-${lo + 20}%`;
 }
 
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
 const round = (n, dp = 2) => (n == null ? null : Math.round(n * 10 ** dp) / 10 ** dp);
 
 // Summarize CLOSED outcomes for one strategy version, optionally since an epoch
-// (ms). Buckets by score band. Pure.
+// (ms). Momentum: a WIN is a positive after-cost return (no TARGET — momentum has
+// none); buckets by rank percentile. Pure.
 export function computeStats(outcomes, { strategyVersion, sinceEpochMs } = {}) {
   const rows = outcomes.filter(
     (o) =>
@@ -63,15 +67,17 @@ export function computeStats(outcomes, { strategyVersion, sinceEpochMs } = {}) {
 
   const summarize = (set) => {
     const n = set.length;
-    const wins = set.filter((o) => o.outcome === "TARGET").length;
+    const wins = set.filter((o) => typeof o.profitPct === "number" && o.profitPct > 0).length;
     const stops = set.filter((o) => o.outcome === "STOP").length;
+    const exits = set.filter((o) => o.outcome === "EXIT").length; // scanner rank/trend close
     const timeouts = set.filter((o) => o.outcome === "TIMEOUT").length;
     const profits = set.map((o) => o.profitPct).filter((x) => typeof x === "number");
     const rs = set.map(realizedR).filter((x) => x != null);
     return {
       n,
-      wins,
+      wins, // after-cost positive
       stops,
+      exits,
       timeouts,
       winRate: n ? round((wins / n) * 100, 1) : null,
       avgProfitPct: round(mean(profits), 2),
@@ -81,7 +87,7 @@ export function computeStats(outcomes, { strategyVersion, sinceEpochMs } = {}) {
 
   const buckets = {};
   for (const o of rows) {
-    const k = bucketKey(o.score);
+    const k = rankBucket(o.rankPct);
     (buckets[k] ??= []).push(o);
   }
   const byBucket = {};
@@ -100,10 +106,10 @@ export function formatStats(stats, label) {
   lines.push(
     `Overall: ${o.n} closed · win ${o.winRate}% · avg ${o.avgProfitPct}% · avg R ${o.avgR}`
   );
-  lines.push(`(${o.wins} target / ${o.stops} stop / ${o.timeouts} timeout)`);
+  lines.push(`(${o.wins} win / ${o.stops} stop / ${o.exits} exit / ${o.timeouts} timeout)`);
   const keys = Object.keys(stats.byBucket).sort();
   if (keys.length) {
-    lines.push("By score:");
+    lines.push("By rank %:");
     for (const k of keys) {
       const b = stats.byBucket[k];
       lines.push(`  ${k}: ${b.n} · win ${b.winRate}% · avg ${b.avgProfitPct}% · R ${b.avgR}`);
