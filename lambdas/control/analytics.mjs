@@ -1,12 +1,12 @@
-// analytics.mjs — Phase 8 analysis harness (pure). Turns accumulated CLOSED
-// gp-outcomes into the numbers needed to TUNE thresholds/weights:
-//   - profit factor, avg win / avg loss, expectancy
-//   - performance by score bucket
-//   - component-predictor edge: for each scoring component, does a HIGH value
-//     actually separate winners from losers? (the input to v2 re-weighting)
+// analytics.mjs — momentum analysis harness (pure). Turns accumulated CLOSED
+// gp-outcomes into the numbers a human reads before any tuning:
+//   - profit factor, avg win / avg loss, expectancy (after cost)
+//   - performance by RANK PERCENTILE band — the v1 predictor question: do the
+//     strongest-ranked names actually win more? (momentum has no score breakdown,
+//     so this rank split IS the predictor analysis.)
 //
-// This computes; it does NOT tune. A human reviews the output and decides weight
-// changes (a STRATEGY_VERSION bump). "Math decides. AI only explains."
+// This computes; it does NOT tune. A human reviews the output and decides any
+// change (a STRATEGY_VERSION bump). "Math decides. AI only explains."
 //
 // IMPORTANT: only compare within one strategyVersion — win-rates across versions
 // are not comparable.
@@ -86,9 +86,14 @@ export function formatAnalysis(a, label) {
   const lines = [`🔬 Analysis${label ? ` (${label})` : ""} — ${a.strategyVersion ?? "all"}`];
   if (!o.n) {
     lines.push(
-      "No closed outcomes yet — Phase 8 needs accumulated data before tuning.",
-      "(Tuning thresholds/weights on no data is forbidden by design.)"
+      "No closed outcomes yet — needs accumulated data before any tuning.",
+      "(Tuning on no data is forbidden by design.)"
     );
+    return lines.join("\n");
+  }
+  if (!o.nValid) {
+    // Closed rows exist but none has a usable profitPct — don't render undefined%.
+    lines.push(`${o.n} closed, but none has a usable profitPct yet — nothing to summarize.`);
     return lines.join("\n");
   }
   lines.push(

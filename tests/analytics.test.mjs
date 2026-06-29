@@ -77,3 +77,10 @@ test("formatAnalysis renders momentum, and the honest empty message", () => {
   assert.match(empty, /No closed outcomes yet/);
   assert.match(empty, /forbidden by design/);
 });
+
+test("formatAnalysis: closed rows but NO usable profitPct → honest message, never undefined%", () => {
+  const rows = [{ status: "CLOSED", strategyVersion: "gp-momentum-1.0.0", rankPct: 90, outcome: "STOP", profitPct: undefined }];
+  const text = formatAnalysis(analyze(rows, { strategyVersion: "gp-momentum-1.0.0" }));
+  assert.match(text, /none has a usable profitPct/);
+  assert.doesNotMatch(text, /undefined/);
+});
