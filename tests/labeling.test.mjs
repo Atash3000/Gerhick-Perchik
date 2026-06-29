@@ -249,11 +249,11 @@ test("MFE/MAE: TIMEOUT trade ranges over the whole window", () => {
   assert.equal(r.maePct, -5);  // worst low 95
 });
 
-test("no fixed target (momentum): an undefined target NEVER fires TARGET, even on a huge rally", () => {
-  // Momentum outcomes carry NO target (exits are stop/trail/rank/trend). Lock the
-  // behavior so a missing target can never produce a phantom TARGET: a massive
-  // rally that never touches the stop must resolve as TIMEOUT, not TARGET.
-  const noTarget = { entry: 100, stop: 97, entryDate: "2026-06-18" }; // target absent
+test("no fixed target (momentum): a non-finite target NEVER fires TARGET, even on a huge rally", () => {
+  // Momentum outcomes carry NO target (exits are stop/trail/rank/trend). The
+  // explicit nullish-target guard treats undefined / null / NaN identically as "no
+  // target" — in particular a null target must NOT scale to 0 and fire a phantom
+  // TARGET on bar 1. A massive rally that never touches the stop resolves as TIMEOUT.
   const bars = [
     b("2026-06-19", 105, 130, 101, 128), // low 101 > stop; high 130 would smash any target
     b("2026-06-22", 128, 145, 120, 140),
@@ -261,8 +261,10 @@ test("no fixed target (momentum): an undefined target NEVER fires TARGET, even o
     b("2026-06-24", 148, 160, 140, 155),
     b("2026-06-25", 155, 165, 150, 160), // day 5 == timeout
   ];
-  const r = labelSignal(noTarget, bars, CONFIG);
-  assert.equal(r.hitTargetFirst, false);
-  assert.notEqual(r.outcome, OUTCOME.TARGET);
-  assert.equal(r.outcome, OUTCOME.TIMEOUT); // exits at the timeout close, never a phantom target
+  for (const target of [undefined, null, NaN]) {
+    const r = labelSignal({ entry: 100, stop: 97, target, entryDate: "2026-06-18" }, bars, CONFIG);
+    assert.equal(r.hitTargetFirst, false, `target=${target} should not hit target`);
+    assert.notEqual(r.outcome, OUTCOME.TARGET, `target=${target} must not be TARGET`);
+    assert.equal(r.outcome, OUTCOME.TIMEOUT, `target=${target} should TIMEOUT`);
+  }
 });
