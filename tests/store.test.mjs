@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createStore, epochDay, epochMs, momentumParams, SNAPSHOT_PARAM_KEYS } from "../lambdas/shared/store.mjs";
+import { createStore, epochDay, epochMs, momentumParams, SNAPSHOT_PARAM_KEYS, normalizeMomentumExitReason } from "../lambdas/shared/store.mjs";
 
 // A fake DynamoDB document client. Records each command's `.input`; can be told
 // to throw (once, or always) to exercise the conditional-put path.
@@ -824,4 +824,53 @@ test("writeMomentumSnapshot scanId/params default to null when not supplied", as
   const { Item } = client.calls[0];
   assert.equal(Item.scanId, null);
   assert.equal(Item.params, null);
+});
+
+// --- schema v2: outcome entry-price separation + sizing audit ----------------
+
+test("openMomentumOutcome stores v2 entry-price separation + sizing audit + scanId", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, outcomesTable: "T-out" });
+  const result = {
+    ticker: "MSFT", dataAsOf: "2026-06-18", strategyVersion: "gp-momentum-1.0.0",
+    entry: 100.13, stop: 95.13, peakClose: 100.13,
+    signalClose: 100.13, plannedEntry: 100.13,
+    entryAtr: 2.0, initialRiskPct: 0.75,
+    momentum: 0.42, slope: 0.0017, r2: 0.91, rank: 3, rankPct: 84.21, shares: 150,
+  };
+  await store.openMomentumOutcome(result, { sector: "Technology", scanId: "scan-xyz" });
+  const { Item } = client.calls[0];
+  assert.equal(Item.scanId, "scan-xyz");
+  assert.equal(Item.signalClose, 100.13);
+  assert.equal(Item.plannedEntry, 100.13);
+  assert.equal(Item.actualEntry, null); // null until live trading
+  assert.equal(Item.fillSlippagePct, null); // null until live trading
+  assert.equal(Item.entryAtr, 2.0);
+  assert.equal(Item.initialRiskPerShare, 5); // entry 100.13 − stop 95.13
+  assert.equal(Item.initialRiskPct, 0.75);
+  assertNoUndefined(Item);
+});
+
+test("openMomentumOutcome defaults signalClose/plannedEntry to entry when not supplied", async () => {
+  const client = fakeClient();
+  const store = createStore({ client, outcomesTable: "T-out" });
+  await store.openMomentumOutcome(
+    { ticker: "MSFT", dataAsOf: "2026-06-18", entry: 42, stop: 40 },
+    {}
+  );
+  const { Item } = client.calls[0];
+  assert.equal(Item.signalClose, 42);
+  assert.equal(Item.plannedEntry, 42);
+  assert.equal(Item.scanId, null);
+});
+
+test("normalizeMomentumExitReason maps every v2 reason (incl manual, data_error)", () => {
+  assert.equal(normalizeMomentumExitReason("HARD_STOP"), "hard_stop");
+  assert.equal(normalizeMomentumExitReason("TRAIL"), "trailing_stop");
+  assert.equal(normalizeMomentumExitReason("TREND"), "trend_exit");
+  assert.equal(normalizeMomentumExitReason("RANK"), "rank_exit");
+  assert.equal(normalizeMomentumExitReason("manual"), "manual");
+  assert.equal(normalizeMomentumExitReason("data_error"), "data_error");
+  assert.equal(normalizeMomentumExitReason(null), null);
+  assert.equal(normalizeMomentumExitReason("bogus"), null); // unknown → null, never garbage
 });
