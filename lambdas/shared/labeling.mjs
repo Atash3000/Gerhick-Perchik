@@ -20,6 +20,28 @@ export const OUTCOME = { STOP: "STOP", TARGET: "TARGET", TIMEOUT: "TIMEOUT" };
 // Split adjustment beyond this magnitude is treated as a split (vs a dividend).
 const SPLIT_THRESHOLD = 0.02; // |scaleFactor - 1| > 2%
 
+// After-cost return %, anchored to the entry (a split-invariant ratio). Costs apply
+// on BOTH sides: 2*(feeBps+slippageBps) bps. EXPORTED so the scanner's rank/trend
+// closes deduct costs IDENTICALLY to the labeler's stop/target/timeout closes — one
+// accounting method across the whole outcome sample, never two.
+export function afterCostProfitPct(entry, exit, { feeBps, slippageBps }) {
+  const grossPct = (exit / entry - 1) * 100;
+  const costPct = (2 * (feeBps + slippageBps)) / 100; // bps→% : /100; two sides : ×2
+  return round(grossPct - costPct, 4);
+}
+
+// Max favorable / adverse excursion from entry — GROSS price travel (not P&L), as
+// split-invariant ratios. EXPORTED so scanner-closed exits report MFE/MAE the same
+// way the labeler does.
+export function excursion(entry, maxHigh, minLow) {
+  return {
+    mfePct: round((maxHigh / entry - 1) * 100, 2),
+    maePct: round((minLow / entry - 1) * 100, 2),
+    mfePrice: round(maxHigh, 4),
+    maePrice: round(minLow, 4),
+  };
+}
+
 // Label one signal. `bars` = ascending daily ADJUSTED bars
 // [{date, open, high, low, close}]. Only bars strictly AFTER entryDate are walked
 // (entry is the close of entryDate).
@@ -116,17 +138,10 @@ export function labelSignal(signal, bars, config) {
 
   if (!outcome) return null; // unresolved; not enough days have passed yet
 
-  // After-cost return, in percent. Anchored to entryAdj so it is split-invariant
-  // (a ratio). Costs apply on both entry and exit sides.
-  const grossPct = (exitPrice / entryAdj - 1) * 100;
-  const costPct = (2 * (feeBps + slippageBps)) / 100; // bps→% : /100; two sides : ×2
-  const profitPct = round(grossPct - costPct, 4);
-
-  // Maximum favorable / adverse excursion, in percent from entry (split-invariant
-  // ratios, like profitPct). MFE = best high reached; MAE = worst low reached.
-  // Gross (no costs) — these measure price travel, not realized P&L.
-  const mfePct = round((maxHigh / entryAdj - 1) * 100, 2);
-  const maePct = round((minLow / entryAdj - 1) * 100, 2);
+  // After-cost return + excursions, via the shared helpers (same math the scanner's
+  // rank/trend closes use). Anchored to entryAdj → split-invariant.
+  const profitPct = afterCostProfitPct(entryAdj, exitPrice, { feeBps, slippageBps });
+  const { mfePct, maePct, mfePrice, maePrice } = excursion(entryAdj, maxHigh, minLow);
 
   return {
     outcome,
@@ -138,8 +153,8 @@ export function labelSignal(signal, bars, config) {
     profitPct,
     mfePct, // max favorable excursion %: highest high over the hold
     maePct, // max adverse excursion %: lowest low over the hold
-    mfePrice: round(maxHigh, 4),
-    maePrice: round(minLow, 4),
+    mfePrice,
+    maePrice,
     ...audit,
   };
 }
