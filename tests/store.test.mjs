@@ -430,6 +430,10 @@ test("openMomentumOutcome opens the gp-momentum outcome contract and drops gp-2.
   assert.equal(Item.strategyVersion, "gp-momentum-1.0.0");
   assert.equal(Item.entry, 100.126);
   assert.equal(Item.stop, 95.126);
+  // peakClose must be present (seeds the chandelier trail) — the scanner reads it
+  // into evaluateExits, which throws on a missing/non-finite peak. Defaults to entry
+  // at a fresh open; here the fixture supplies it.
+  assert.equal(Item.peakClose, 104.44);
   assert.equal(Item.momentum, 0.423456);
   assert.equal(Item.slope, 0.0017);
   assert.equal(Item.r2, 0.91);

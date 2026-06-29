@@ -363,6 +363,10 @@ export function createStore({ client, snapshotsTable, outcomesTable, watchlistTa
         strategyVersion: result.strategyVersion ?? STRATEGY_VERSION,
         entry: nullableNumber(result.entry),
         stop: nullableNumber(result.stop),
+        // peakClose seeds the chandelier trail. At entry the highest close since
+        // entry IS the entry, so default to entry — the scanner (4b) reads this back
+        // into evaluateExits/updateTrailingStop, which require a finite peakClose.
+        peakClose: nullableNumber(result.peakClose ?? result.entry, 2),
         momentum: nullableNumber(result.momentum),
         slope: nullableNumber(result.slope),
         r2: nullableNumber(result.r2),
