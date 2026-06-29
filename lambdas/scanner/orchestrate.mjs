@@ -93,16 +93,21 @@ export function planScan({ config, regimeOn, asOf, gathered, ranked, openOutcome
   // The regime gate (§2): open NEW longs only when SPY is risk-on. Risk-off → buy
   // NOTHING; existing positions keep being managed by their exits (drift to cash).
   const heldNow = new Set([...openByT.keys()].filter((t) => !exitedTickers.has(t)));
-  const picks = regimeOn ? constructBook(ranked ?? [], heldNow, governor, config).buys : [];
+  const { candidates, slots } = regimeOn
+    ? constructBook(ranked ?? [], heldNow, governor, config)
+    : { candidates: [], slots: 0 };
 
+  // Fill `slots` from the ordered candidate pool, SKIPPING any that can't be sized
+  // so the next-ranked candidate backfills the slot (fill to target; #85).
   const buys = [];
-  for (const r of picks) {
+  for (const r of candidates) {
+    if (buys.length >= slots) break;
     const g = byTicker.get(r.ticker);
     if (!g || !g.md?.fresh) continue;
     const m = g.md;
     const entry = m.close; // OBSERVE: entry = signalClose = today's close (locked approximation)
     const sizing = sizePosition(entry, m.atr, accountValue, config);
-    if (!sizing) continue; // can't size a real position → skip
+    if (!sizing) continue; // unsizable → skip; the next candidate fills this slot
     buys.push({
       sector: g.sector,
       result: {

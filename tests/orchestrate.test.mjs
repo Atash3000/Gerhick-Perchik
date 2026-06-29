@@ -250,3 +250,20 @@ test("alert failure is BEST-EFFORT: a Telegram throw doesn't fail the scan or bl
   assert.equal(r.alertsSent, 0);
   assert.equal(r.alertErrors, 2); // counted, not fatal
 });
+
+test("#85 backfill: an UNSIZABLE top pick's slot is taken by the next-ranked sizable name", () => {
+  // A is top-ranked but un-sizable (ATR so large that 0.75% of the account can't
+  // cover one share's risk → sizePosition returns null). The 2 slots must still
+  // fill — B and C — not leave a gap. This is the path a bigger account hides.
+  const gathered = [
+    { ticker: "A", sector: "T", md: md({ close: 100, atr: 400 }), eligibility: elig() }, // unsizable
+    { ticker: "B", sector: "T", md: md({ close: 100, atr: 4 }), eligibility: elig() },
+    { ticker: "C", sector: "T", md: md({ close: 100, atr: 4 }), eligibility: elig() },
+  ];
+  const ranked = [rankRow("A", 1, { entry: true }), rankRow("B", 2, { entry: true }), rankRow("C", 3, { entry: true })];
+  const plan = planScan({
+    config: { ...CFG, targetPositions: 2 }, regimeOn: true, asOf: "2026-06-26",
+    gathered, ranked, openOutcomes: [], governor: { blockNewBuys: false }, accountValue: 100_000,
+  });
+  assert.deepEqual(plan.buys.map((b) => b.result.ticker), ["B", "C"]); // A skipped, slot backfilled by C
+});
