@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { labelSignal, OUTCOME, spyBenchmark } from "../lambdas/shared/labeling.mjs";
+import { labelSignal, OUTCOME, spyBenchmark, afterCostProfitPct, excursion } from "../lambdas/shared/labeling.mjs";
 
 const SIGNAL = { entry: 100, stop: 97, target: 110, entryDate: "2026-06-18" };
 const CONFIG = { feeBps: 10, slippageBps: 5, timeoutTradingDays: 5 };
@@ -267,4 +267,21 @@ test("no fixed target (momentum): a non-finite target NEVER fires TARGET, even o
     assert.notEqual(r.outcome, OUTCOME.TARGET, `target=${target} must not be TARGET`);
     assert.equal(r.outcome, OUTCOME.TIMEOUT, `target=${target} should TIMEOUT`);
   }
+});
+
+// --- extracted, reusable cost + excursion helpers (shared by scanner closes) ---
+
+test("afterCostProfitPct deducts feeBps+slippageBps on BOTH sides (matches labeler)", () => {
+  // Round trip cost = 2*(10+5) bps = 0.30%. Same values the labeler tests rely on.
+  assert.equal(afterCostProfitPct(100, 97, CONFIG), -3.3); // -3% gross − 0.30
+  assert.equal(afterCostProfitPct(100, 110, CONFIG), 9.7); // +10% gross − 0.30
+  assert.equal(afterCostProfitPct(100, 103, CONFIG), 2.7); // +3% gross − 0.30
+});
+
+test("excursion reports MFE/MAE % and prices from entry (gross, price travel)", () => {
+  const e = excursion(100, 130, 95);
+  assert.equal(e.mfePct, 30);
+  assert.equal(e.maePct, -5);
+  assert.equal(e.mfePrice, 130);
+  assert.equal(e.maePrice, 95);
 });
