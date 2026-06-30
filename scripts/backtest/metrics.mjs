@@ -26,11 +26,7 @@ export function computeMetrics(equityCurve, ledger, { startEquity }) {
   const rMean = mean(rets), rStd = std(rets);
   const downside = rets.filter((r) => r < 0);
   const dStd = downside.length >= 2 ? Math.sqrt(downside.reduce((a, r) => a + r * r, 0) / downside.length) : null;
-  // When std=0 (perfectly consistent returns): theoretically infinite; cap at ±9999.
-  const sharpe =
-    rStd == null  ? null :
-    rStd === 0    ? (rMean > 0 ? 9999 : rMean < 0 ? -9999 : 0) :
-                    (rMean / rStd) * Math.sqrt(252);
+  const sharpe = rStd ? (rMean / rStd) * Math.sqrt(252) : null;
   const sortino = dStd ? (rMean / dStd) * Math.sqrt(252) : null;
 
   // Trade stats.

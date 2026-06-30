@@ -23,8 +23,11 @@ test("computeMetrics: CAGR and maxDrawdown on a known curve", () => {
 
 test("computeMetrics: Sharpe positive for steady gains, Sortino ≥ Sharpe", () => {
   const curve = [{ date: "d0", nav: 100000, invested: 0, cash: 100000 }];
-  for (let i = 1; i < 60; i++) curve.push({ date: `d${i}`, nav: curve[i - 1].nav * 1.001, invested: 0, cash: curve[i - 1].nav * 1.001 });
+  for (let i = 1; i < 60; i++) {
+    const factor = i % 2 === 0 ? 1.0010 : 1.0012; // alternating ~0.10% / ~0.12% — positive mean, nonzero std
+    curve.push({ date: `d${i}`, nav: curve[i - 1].nav * factor, invested: 0, cash: curve[i - 1].nav * factor });
+  }
   const m = computeMetrics(curve, [], { startEquity: 100000 });
-  assert.ok(m.sharpe > 0);
+  assert.ok(Number.isFinite(m.sharpe) && m.sharpe > 0, `sharpe should be finite positive, got ${m.sharpe}`);
   assert.ok(m.sortino === null || m.sortino >= m.sharpe); // no/low downside → Sortino ≥ Sharpe
 });
