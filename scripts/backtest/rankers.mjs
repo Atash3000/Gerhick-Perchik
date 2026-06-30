@@ -32,3 +32,48 @@ export function applyRankZones(scoredDesc, config) {
 export function momentumRanker(items, config) {
   return rankByMomentum(items, config);
 }
+
+// --- test-A baseline rankers (scaffolding; NOT the production ranker) ---
+
+// rankByScore: score all items with scoreFn(closes), sort descending, apply zones.
+function rankByScore(items, scoreFn, config) {
+  const scored = items
+    .map((it) => ({ ticker: it.ticker, score: scoreFn(it.closes) }))
+    .filter((s) => Number.isFinite(s.score))
+    .sort((a, b) => b.score - a.score || a.ticker.localeCompare(b.ticker));
+  return applyRankZones(scored, config);
+}
+
+// retOver: simple price return over a lookback window.
+const retOver = (closes, lookback) => {
+  if (closes.length <= lookback) return NaN;
+  const a = closes[closes.length - 1 - lookback];
+  const b = closes[closes.length - 1];
+  return a > 0 ? b / a - 1 : NaN;
+};
+
+// logSlope: plain slope of log-price over momentumLookback (no R²), via simple
+// least-squares. Faster/simpler than slope×R² — used to isolate R²'s contribution.
+function logSlope(closes, lookback) {
+  if (closes.length <= lookback) return NaN;
+  const y = closes.slice(-lookback).map((c) => Math.log(c));
+  const n = y.length;
+  const mx = (n - 1) / 2;
+  const my = y.reduce((a, b) => a + b, 0) / n;
+  let num = 0;
+  let den = 0;
+  for (let i = 0; i < n; i++) {
+    num += (i - mx) * (y[i] - my);
+    den += (i - mx) ** 2;
+  }
+  return den > 0 ? num / den : NaN;
+}
+
+export const return126Ranker = (items, config) =>
+  rankByScore(items, (c) => retOver(c, 126), config);
+
+export const return189Ranker = (items, config) =>
+  rankByScore(items, (c) => retOver(c, 189), config);
+
+export const slopeRanker = (items, config) =>
+  rankByScore(items, (c) => logSlope(c, config.momentumLookback), config);
