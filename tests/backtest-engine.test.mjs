@@ -11,6 +11,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { applyRankZones } from "../scripts/backtest/rankers.mjs";
 import { simulate } from "../scripts/backtest/engine.mjs";
+import { afterCostProfitPct } from "../lambdas/shared/labeling.mjs";
 
 // ─── A: rankers.mjs ──────────────────────────────────────────────────────────
 
@@ -164,4 +165,81 @@ test("governor blocks new buys after a weekly drawdown >8%", () => {
   // BBB must NOT appear in the ledger — the weekly governor blocked its buy at cal[25].
   const bbbTrade = ledger.find((t) => t.ticker === "BBB");
   assert.equal(bbbTrade, undefined, "BBB should NOT be bought — weekly DD governor blocked it");
+});
+
+// ─── C: cost reconciliation (load-bearing — §4 / §10) ────────────────────────
+//
+// Asserts that the TWO cost representations in the engine agree for a single
+// round-trip with nonzero cost:
+//
+//   (a) EXACT: ledger profitPct IS afterCostProfitPct(entry, exit, config)
+//       because closeTrade() in engine.mjs calls that function directly.
+//
+//   (b) WITHIN-TOLERANCE: the NAV cash-haircut P&L derived from the equity
+//       curve accounting [buy: shares*entry*(1+COST), sell: shares*exit*(1-COST)]
+//       agrees with ledger profitPct to < 0.05%.  The two differ only at second
+//       order — additive % vs multiplicative per-leg — giving a delta of roughly
+//       2·COST·grossPct ≈ 0.02% for a ~7% gain with 15 bps total cost.
+//
+// Fixture: monotonically rising integer prices (open=close=100+i) so ATR is
+// stable (TR=2 every bar), the stop never fires, and the trade closes via
+// end_of_backtest at cal[29].  Entry at cal[21] open (121), exit at cal[29]
+// close (129).  SPY also rises (close=100+i) so the regime gate (strictly
+// last close > SMA(regimeMa=3)) is always open.
+
+test("cost reconciliation: ledger profitPct ≡ NAV-derived per-trade P&L (within tolerance)", () => {
+  const cal = sessions(30);
+
+  // Rising integer prices: open = close = 100+i so ATR(3) = TR = H-L = 2 (exact).
+  // Regime gate uses `close > SMA(regimeMa)` (strictly >), so SPY must also rise.
+  const bars = cal.map((date, i) => ({
+    date, open: 100 + i, high: 101 + i, low: 99 + i, close: 100 + i, volume: 1_000_000,
+  }));
+  const spy = cal.map((date, i) => ({
+    date, open: 100 + i, high: 101 + i, low: 99 + i, close: 100 + i, volume: 1_000_000,
+  }));
+  const cfg = { ...ECFG, slippageBps: 10, feeBps: 5 };
+
+  const { ledger } = simulate(
+    { universe: [{ ticker: "CCC", bars }], spyBars: spy, calendar: cal, config: cfg },
+    { rebalanceWeekday: 1 },
+  );
+
+  // Fixture sanity: must have a closed trade to assert on (informative failure if not).
+  assert.ok(
+    ledger.length > 0,
+    "cost-recon fixture produced no closed trades — check warmup (need ≥20 bars before first eligible review)",
+  );
+  const t = ledger[0];
+  assert.ok(t.shares > 0, "trade must have a positive share count");
+
+  // ── (a) EXACT match: ledger profitPct IS the afterCostProfitPct call ─────────
+  // closeTrade() stores profitPct = afterCostProfitPct(pos.entry, exitPrice, config).
+  // t.entry and t.exit are those values rounded to 4dp; for integer prices they are
+  // unchanged, so the recomputed value must be bit-for-bit equal.
+  const recomputed = afterCostProfitPct(t.entry, t.exit, cfg);
+  assert.equal(
+    t.profitPct,
+    recomputed,
+    `profitPct mismatch — ledger=${t.profitPct} recomputed=${recomputed} (entry=${t.entry} exit=${t.exit})`,
+  );
+
+  // ── (b) WITHIN-TOLERANCE: NAV cash-haircut P&L ≈ ledger profitPct ───────────
+  // The engine deducts (feeBps+slippageBps) bps as cash haircuts on every fill:
+  //   buy:  cash -= shares * entry * (1 + COST)
+  //   sell: cash += shares * exit  * (1 - COST)
+  // where COST = (feeBps+slippageBps)/1e4.  The resulting per-trade P&L expressed
+  // as a % of the buy outlay differs from afterCostProfitPct only at second order.
+  const COST = (cfg.feeBps + cfg.slippageBps) / 1e4;
+  const buyCash      = t.shares * t.entry * (1 + COST);
+  const sellProceeds = t.shares * t.exit  * (1 - COST);
+  const navPnlPct    = ((sellProceeds - buyCash) / buyCash) * 100;
+  const delta        = Math.abs(navPnlPct - t.profitPct);
+
+  assert.ok(
+    delta < 0.05,
+    `cost-recon delta ${delta.toFixed(5)}% ≥ 0.05% tolerance — ` +
+    `navPnl=${navPnlPct.toFixed(6)}% ledger=${t.profitPct}% ` +
+    `entry=${t.entry} exit=${t.exit} shares=${t.shares} COST=${COST}`,
+  );
 });
