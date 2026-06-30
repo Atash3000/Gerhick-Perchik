@@ -13,7 +13,8 @@
     "validate": "sam validate --region us-east-1 --lint",
     "build": "PATH=\"$PWD/node_modules/.bin:$PATH\" sam build",
     "seed": "node scripts/seed.mjs",
-    "seed:apply": "node scripts/seed.mjs --apply"
+    "seed:apply": "node scripts/seed.mjs --apply",
+    "backtest": "node scripts/backtest/run.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.620.0",

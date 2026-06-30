@@ -1,0 +1,266 @@
+{
+  "strategyVersion": "gp-momentum-1.0.0",
+  "gitSha": "22ce848",
+  "runTimestamp": "2026-06-30T17:35:33.720Z",
+  "isSubsetRun": true,
+  "subsetParams": {
+    "limit": 8,
+    "since": "2015-01-01"
+  },
+  "period": {
+    "start": "2015-01-02",
+    "end": "2026-06-29"
+  },
+  "universeSize": 8,
+  "params": {
+    "accountSize": 100000,
+    "alertMode": "observe",
+    "atrPeriod": 20,
+    "entryRankPct": 20,
+    "exitRankPct": 30,
+    "feeBps": 0,
+    "gapFilterPct": 15,
+    "gapFilterWindow": 90,
+    "kStop": 2.5,
+    "maxDdLimit": 25,
+    "maxPositions": 20,
+    "minDollarVol": 10000000,
+    "minPrice": 5,
+    "momentumLookback": 90,
+    "monthlyDdLimit": 15,
+    "note": "gp-momentum-1.0.0 tunables. The strategy parameters (minPrice, minDollarVol, regimeMa, trendMa, momentumLookback, gapFilterPct, gapFilterWindow, entryRankPct, exitRankPct, atrPeriod, kStop, riskPctPerTrade, targetPositions, maxPositions, positionCapPct, weeklyDdLimit, monthlyDdLimit, maxDdLimit) are the FROZEN, PRE-REGISTERED values from docs/Strategy-v1.md §8 — do NOT fit them to history; any change is a new strategy version re-tested from scratch (Validation-Scorecard). alertMode MUST start 'observe'; only a human flips it to 'live'. OPERATIONAL/COST values are NOT in §8 and are agent-proposed defaults to confirm before --apply: feeBps=0 (commissions ~$0 at modern brokers, §9 'include them'), slippageBps=10 (~0.1%/side, §9), timeoutTradingDays=252 (labeler backstop only — momentum has no time-based exit and 'lets winners run', so this is set long to avoid truncating runners), accountSize=10000 (sizing base, arbitrary in observe mode). This file is NOT auto-applied; writing it to the live gp-config row is a deliberate human step (scripts/seed.mjs --apply), and gp-config is a human-reserved trading row.",
+    "pk": "CONFIG",
+    "positionCapPct": 15,
+    "regimeMa": 200,
+    "riskPctPerTrade": 0.75,
+    "slippageBps": 10,
+    "strategyVersion": "gp-momentum-1.0.0",
+    "targetPositions": 15,
+    "timeoutTradingDays": 252,
+    "trendMa": 100,
+    "weeklyDdLimit": 8,
+    "sk": "ACTIVE"
+  },
+  "strategy": {
+    "cagr": 3.08,
+    "maxDrawdown": 6.89,
+    "sharpe": 0.62,
+    "sortino": 0.55,
+    "winRate": 45.16,
+    "avgWin": 10.7,
+    "avgLoss": -5.4,
+    "expectancy": 1.87,
+    "profitFactor": 1.63,
+    "annualTurnover": 1.83,
+    "avgHoldingDays": 19.03,
+    "costDragPct": 10.77,
+    "pctTimeInCash": 25.73,
+    "worstLosingStreak": 8,
+    "avgExposure": 0.15,
+    "returnPerInvested": 281.45,
+    "nTrades": 186,
+    "finalNav": 141505.39
+  },
+  "spy": {
+    "cagr": 13.67,
+    "maxDrawdown": 33.7,
+    "sharpe": 0.82,
+    "sortino": 0.77,
+    "winRate": 100,
+    "avgWin": 334.85,
+    "avgLoss": null,
+    "expectancy": 334.85,
+    "profitFactor": null,
+    "annualTurnover": 0.04,
+    "avgHoldingDays": 2887,
+    "costDragPct": 0.16,
+    "pctTimeInCash": 0,
+    "worstLosingStreak": 0,
+    "avgExposure": 1,
+    "returnPerInvested": 334.18,
+    "nTrades": 1,
+    "finalNav": 434182.63
+  },
+  "tests": {
+    "ablation": [
+      {
+        "removed": "baseline",
+        "cagr": 3.08,
+        "maxDrawdown": 6.89,
+        "sharpe": 0.62
+      },
+      {
+        "removed": "noRegime",
+        "cagr": 2.9,
+        "maxDrawdown": 7.65,
+        "sharpe": 0.58
+      },
+      {
+        "removed": "noRanking",
+        "cagr": 2.71,
+        "maxDrawdown": 9.11,
+        "sharpe": 0.63
+      },
+      {
+        "removed": "noAtrSizing",
+        "cagr": 1.92,
+        "maxDrawdown": 5.81,
+        "sharpe": 0.56
+      },
+      {
+        "removed": "noGovernor",
+        "cagr": 3.08,
+        "maxDrawdown": 6.89,
+        "sharpe": 0.62
+      },
+      {
+        "removed": "noTrend",
+        "cagr": 4.8,
+        "maxDrawdown": 6.79,
+        "sharpe": 0.84
+      }
+    ],
+    "baseline": [
+      {
+        "metric": "return126",
+        "cagr": 3.86
+      },
+      {
+        "metric": "return189",
+        "cagr": 2.24
+      },
+      {
+        "metric": "slopeOnly",
+        "cagr": 4.07
+      },
+      {
+        "metric": "slopeR2",
+        "cagr": 3.08
+      }
+    ],
+    "rebalanceDay": {
+      "rows": [
+        {
+          "weekday": 1,
+          "cagr": 3.61,
+          "maxDrawdown": 8.4
+        },
+        {
+          "weekday": 2,
+          "cagr": 2.58,
+          "maxDrawdown": 10.21
+        },
+        {
+          "weekday": 3,
+          "cagr": 2.58,
+          "maxDrawdown": 9.68
+        },
+        {
+          "weekday": 4,
+          "cagr": 3.33,
+          "maxDrawdown": 8.85
+        },
+        {
+          "weekday": 5,
+          "cagr": 3.08,
+          "maxDrawdown": 6.89
+        }
+      ],
+      "cagrSpread": 1.0299999999999998,
+      "sameVerdict": true
+    },
+    "cost": {
+      "base": {
+        "cagr": 3.08,
+        "maxDrawdown": 6.89
+      },
+      "double": {
+        "cagr": 2.69,
+        "maxDrawdown": 7
+      }
+    },
+    "concentration": {
+      "full": 41.505390000000084,
+      "strip5": 5.356405263962372,
+      "strip10": -9.532764637450697,
+      "strip20": -26.556896268293762
+    },
+    "sweep": [
+      {
+        "trendMa": 80,
+        "cagr": 3.1,
+        "maxDrawdown": 6.76
+      },
+      {
+        "trendMa": 90,
+        "cagr": 2.94,
+        "maxDrawdown": 7.67
+      },
+      {
+        "trendMa": 100,
+        "cagr": 3.08,
+        "maxDrawdown": 6.89
+      },
+      {
+        "trendMa": 110,
+        "cagr": 3.02,
+        "maxDrawdown": 8.52
+      },
+      {
+        "trendMa": 120,
+        "cagr": 3.57,
+        "maxDrawdown": 8.34
+      },
+      {
+        "trendMa": 150,
+        "cagr": 4,
+        "maxDrawdown": 6.84
+      }
+    ]
+  },
+  "coverage": [
+    {
+      "window": "full period",
+      "namesWithData": 8,
+      "total": 8
+    },
+    {
+      "window": "2008-2009",
+      "namesWithData": 0,
+      "total": 8
+    },
+    {
+      "window": "2020 crash",
+      "namesWithData": 8,
+      "total": 8
+    },
+    {
+      "window": "2022",
+      "namesWithData": 8,
+      "total": 8
+    }
+  ],
+  "warnings": [
+    "AMD: price discontinuity 2.62→3.99 (2016-04-22) — possible unadjusted split, --refresh"
+  ],
+  "passFail": [
+    {
+      "criterion": "After-cost CAGR ≥ SPY − 2 pts",
+      "strategy": 3.08,
+      "spy": 13.67,
+      "pass": false
+    },
+    {
+      "criterion": "Max drawdown ≤ 0.65 × SPY",
+      "strategy": 6.89,
+      "spy": 33.7,
+      "pass": true
+    },
+    {
+      "criterion": "Sortino > SPY and Sharpe ≥ SPY",
+      "strategy": "0.55/0.62",
+      "spy": "0.77/0.82",
+      "pass": false
+    }
+  ]
+}
