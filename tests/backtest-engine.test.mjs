@@ -243,3 +243,61 @@ test("cost reconciliation: ledger profitPct ≡ NAV-derived per-trade P&L (withi
     `entry=${t.entry} exit=${t.exit} shares=${t.shares} COST=${COST}`,
   );
 });
+
+// ─── D: noRanking ablation (load-bearing — proves the wiring is live) ──────────
+//
+// Constructs a two-ticker universe where DOLLAR-VOLUME order ≠ MOMENTUM order:
+//   "MOM": fast-rising price (high momentum score), very low volume  → low dollar vol
+//   "VOL": nearly flat price (low momentum score),  very high volume → high dollar vol
+//
+// Baseline (momentum ranking) → "MOM" ranks #1 → buys "MOM".
+// noRanking ablation (dollar-vol ranking) → "VOL" ranks #1 → buys "VOL".
+// The two runs must produce a DIFFERENT first ticker in the ledger.
+
+test("ablation noRanking: dollar-vol ranking produces a different book than momentum ranking", () => {
+  const cal = sessions(35); // 35 sessions → warmup satisfied, one eligible review at cal[20]
+
+  // "MOM": steadily rising price → high momentum score; tiny volume → low dollar vol.
+  const momBars = cal.map((date, i) => ({
+    date,
+    open:   10 + i * 0.5 - 0.1,
+    high:   10 + i * 0.5 + 0.5,
+    low:    10 + i * 0.5 - 0.5,
+    close:  10 + i * 0.5,
+    volume: 500, // dollar vol ≈ $5k–$17.5k (very low)
+  }));
+
+  // "VOL": nearly flat price → low momentum score; massive volume → high dollar vol.
+  const volBars = cal.map((date, i) => ({
+    date,
+    open:   20 + i * 0.01 - 0.01,
+    high:   20 + i * 0.01 + 0.1,
+    low:    20 + i * 0.01 - 0.1,
+    close:  20 + i * 0.01,
+    volume: 1_000_000, // dollar vol ≈ $20M (very high)
+  }));
+
+  const spy = cal.map((date, i) => ({
+    date, open: 100 + i, high: 101 + i, low: 99 + i, close: 100 + i, volume: 1e6,
+  }));
+
+  // targetPositions:1 forces a single slot → ranking determines which name is chosen.
+  // ECFG already has targetPositions:1, maxPositions:1, entryRankPct:100.
+  const universe = [{ ticker: "MOM", bars: momBars }, { ticker: "VOL", bars: volBars }];
+  const inputs = { universe, spyBars: spy, calendar: cal, config: ECFG };
+
+  const { ledger: baseLedger } = simulate(inputs, { rebalanceWeekday: 1 });
+  const { ledger: abLedger   } = simulate(inputs, { rebalanceWeekday: 1, ablation: { noRanking: true } });
+
+  // Sanity: both runs must have at least one closed trade.
+  assert.ok(baseLedger.length > 0, "baseline must have at least one closed trade");
+  assert.ok(abLedger.length   > 0, "noRanking ablation must have at least one closed trade");
+
+  // The FIRST closed trade's ticker must differ — proving momentum vs dollar-vol rank diverge.
+  const baseFirst = baseLedger[0].ticker;
+  const abFirst   = abLedger[0].ticker;
+  assert.notEqual(
+    baseFirst, abFirst,
+    `baseline and noRanking both chose "${baseFirst}" — ablation.noRanking is a no-op`,
+  );
+});

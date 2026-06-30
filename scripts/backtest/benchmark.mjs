@@ -17,6 +17,14 @@ export function spyBuyHold(spyBars, calendar, startEquity, config) {
     const nav = shares * px; // fully invested; cash ≈ 0
     return { date, nav: round(nav, 2), invested: round(nav, 2), cash: 0 };
   });
+  // Apply terminal sell-side cost haircut to the final curve point — symmetric with
+  // the engine's end-of-run force-close (engine deducts COST on the sell leg).
+  // Keeps the single ledger trade's profitPct (already after cost) unchanged.
+  if (equityCurve.length > 0) {
+    const lastPt = equityCurve[equityCurve.length - 1];
+    const finalNav = round(lastPt.nav * (1 - COST), 2);
+    equityCurve[equityCurve.length - 1] = { ...lastPt, nav: finalNav, invested: finalNav };
+  }
   const exit = last.close;
   const ledger = [{
     ticker: "SPY", entryDate: calendar[0], entry: round(entry), shares: round(shares, 6),

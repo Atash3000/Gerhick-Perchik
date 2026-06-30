@@ -1,7 +1,7 @@
 {
   "strategyVersion": "gp-momentum-1.0.0",
-  "gitSha": "84ad7c7",
-  "runTimestamp": "2026-06-30T17:15:26.726Z",
+  "gitSha": "22ce848",
+  "runTimestamp": "2026-06-30T17:35:33.720Z",
   "isSubsetRun": true,
   "subsetParams": {
     "limit": 8,
@@ -62,7 +62,7 @@
     "finalNav": 141505.39
   },
   "spy": {
-    "cagr": 13.68,
+    "cagr": 13.67,
     "maxDrawdown": 33.7,
     "sharpe": 0.82,
     "sortino": 0.77,
@@ -77,9 +77,9 @@
     "pctTimeInCash": 0,
     "worstLosingStreak": 0,
     "avgExposure": 1,
-    "returnPerInvested": 334.62,
+    "returnPerInvested": 334.18,
     "nTrades": 1,
-    "finalNav": 434617.25
+    "finalNav": 434182.63
   },
   "tests": {
     "ablation": [
@@ -97,9 +97,9 @@
       },
       {
         "removed": "noRanking",
-        "cagr": 3.08,
-        "maxDrawdown": 6.89,
-        "sharpe": 0.62
+        "cagr": 2.71,
+        "maxDrawdown": 9.11,
+        "sharpe": 0.63
       },
       {
         "removed": "noAtrSizing",
@@ -247,7 +247,7 @@
     {
       "criterion": "After-cost CAGR ≥ SPY − 2 pts",
       "strategy": 3.08,
-      "spy": 13.68,
+      "spy": 13.67,
       "pass": false
     },
     {

@@ -13,11 +13,11 @@
 //      trend exits → run governor + constructBook + sizing → queue buys.
 // End of run: force-close all open positions at last close; overwrite final NAV.
 
-import { isEligible, sizePosition, evaluateExits, riskGovernor, constructBook }
+import { isEligible, sizePosition, evaluateExits, riskGovernor, constructBook, DOLLAR_VOL_WINDOW }
   from "../../lambdas/shared/portfolio.mjs";
 import { atrWilder, sma } from "../../lambdas/shared/marketdata.mjs";
 import { afterCostProfitPct } from "../../lambdas/shared/labeling.mjs";
-import { momentumRanker } from "./rankers.mjs";
+import { momentumRanker, applyRankZones } from "./rankers.mjs";
 
 const round      = (n, dp = 4) => (Number.isFinite(n) ? Math.round(n * 10 ** dp) / 10 ** dp : n);
 const weekdayOf  = (isoDate)   => new Date(`${isoDate}T00:00:00Z`).getUTCDay(); // 0=Sun..6=Sat
@@ -196,7 +196,22 @@ export function simulate({ universe, spyBars, calendar, config }, opts = {}) {
       }
     }
 
-    const ranked   = rankFn(eligItems, config);
+    // noRanking ablation: replace momentum score with 20-day avg dollar volume so
+    // we can isolate the contribution of the momentum ranking to the strategy.
+    let ranked;
+    if (ablation.noRanking) {
+      const scored = eligItems.map((it) => {
+        const slice  = sliceCache.get(it.ticker) ?? [];
+        const dvSlice = slice.slice(-DOLLAR_VOL_WINDOW);
+        const score  = dvSlice.length > 0
+          ? dvSlice.reduce((s, b) => s + b.close * b.volume, 0) / dvSlice.length
+          : 0;
+        return { ticker: it.ticker, score };
+      }).sort((a, b) => b.score - a.score || a.ticker.localeCompare(b.ticker));
+      ranked = applyRankZones(scored, config);
+    } else {
+      ranked = rankFn(eligItems, config);
+    }
     const rankByT  = new Map(ranked.map((r) => [r.ticker, r]));
 
     // ── 4.2 Exits BEFORE fills (rank / trend); stop handled by the daily walk ─

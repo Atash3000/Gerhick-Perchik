@@ -3,11 +3,16 @@
 // engine/tests stay offline; run.mjs passes the real getDailyBars wrapper.
 import { readCache, writeCache } from "./cache.mjs";
 
-export async function loadUniverse({ tickers, startDate, dir, fetchBars, now, throttleMs = 0 }) {
+// skipCacheRead: when true, bypass the cache read and always fetch fresh bars from
+// the network — but still WRITE to the canonical dir so the next non-refresh run
+// picks up the fresh data. Used by run.mjs --refresh.
+export async function loadUniverse({ tickers, startDate, dir, fetchBars, now, throttleMs = 0, skipCacheRead = false }) {
   const out = [];
   for (const ticker of tickers) {
-    const cached = readCache(dir, ticker, startDate);
-    if (cached) { out.push({ ticker, bars: cached.bars, fetchedAt: cached.fetchedAt }); continue; }
+    if (!skipCacheRead) {
+      const cached = readCache(dir, ticker, startDate);
+      if (cached) { out.push({ ticker, bars: cached.bars, fetchedAt: cached.fetchedAt }); continue; }
+    }
     if (throttleMs) await new Promise((r) => setTimeout(r, throttleMs));
     const bars = await fetchBars(ticker, startDate);
     writeCache(dir, ticker, startDate, bars, now);

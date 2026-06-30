@@ -74,9 +74,8 @@ if (limitN != null) allTickers = allTickers.slice(0, limitN);
 // fetchBars closes over `startDate` so the same value is used for caching keying.
 // `loadUniverse` calls fetchBars(ticker, startDate) but the second arg is ignored
 // here — the cache module uses the outer startDate for the cache filename.
-const spyCacheDir = refresh ? join(CACHE_DIR, "_refresh_bust_") : CACHE_DIR;
-const tickerCacheDir = refresh ? join(CACHE_DIR, "_refresh_bust_") : CACHE_DIR;
-
+// --refresh: bypass the cache READ but still WRITE to the canonical CACHE_DIR so
+// subsequent non-refresh runs pick up the fresh data immediately.
 const fetchBars = async (ticker) => {
   await new Promise((r) => setTimeout(r, 250));
   try {
@@ -91,9 +90,10 @@ console.log(`Loading SPY...`);
 const spyRaw = (await loadUniverse({
   tickers: ["SPY"],
   startDate,
-  dir: spyCacheDir,
+  dir: CACHE_DIR,
   fetchBars,
   now: nowIso,
+  skipCacheRead: refresh,
 }))[0];
 
 // SPY is required — the calendar, regime filter, and benchmark all depend on it.
@@ -106,10 +106,11 @@ console.log(`Loading ${allTickers.length} universe tickers (cache-first)...`);
 const universeRaw = await loadUniverse({
   tickers: allTickers,
   startDate,
-  dir: tickerCacheDir,
+  dir: CACHE_DIR,
   fetchBars,
   now: nowIso,
   throttleMs: 250,
+  skipCacheRead: refresh,
 });
 
 // Filter out any ticker that returned no bars (data gap, unlisted, etc.).
