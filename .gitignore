@@ -7,3 +7,4 @@ aws-credentials*
 .DS_Store
 samconfig.local.toml
 scripts/backtest/.cache/
+.superpowers/
